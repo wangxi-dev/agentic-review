@@ -31,6 +31,7 @@ def make_cfg(root, **over):
     a.no_untracked = over.get("no_untracked", False)
     a.allow_origin = over.get("allow_origin")
     a.comments_dir = over.get("comments_dir")
+    a.work_dir = over.get("work_dir")
     a.comment_store = over.get("comment_store", "files")
     a.github_repo = over.get("github_repo")
     a.github_issue = over.get("github_issue")
@@ -411,11 +412,153 @@ class EndToEndHttpTests(unittest.TestCase):
             self._send("DELETE", "/api/comments?id=nonexistent", None)
         self.assertEqual(e.exception.code, 404)
 
+    def test_tree_lists_all_files(self):
+        st, data = self.get("/api/tree")
+        names = [e["name"] for e in data["entries"]]
+        self.assertIn("a.txt", names)          # unchanged + changed both appear
+        # img.bin is a tracked file -> should be in the tree even if unchanged-by-name
+        self.assertIn("img.bin", names)
+        # change status is annotated
+        a = [e for e in data["entries"] if e.get("name") == "a.txt"][0]
+        self.assertEqual(a["status"], "modified")
+
+    def test_tree_excludes_work_dir(self):
+        st, data = self.get("/api/tree")
+        names = [e["name"] for e in data["entries"]]
+        self.assertNotIn(".agentic-review", names)
+        self.assertNotIn(".git", names)
+
+    def test_precommit_roundtrip_and_pseudo_entry(self):
+        st, res = self.post("/api/precommit", {"message": "# Title\n\nbody"})
+        self.assertEqual(res["status"], "ok")
+        self.assertTrue(res["path"].startswith(".agentic-review/precommit/"))
+        # appears as a pseudo entry at the top of the manifest
+        _, man = self.get("/api/manifest")
+        first = man["files"][0]
+        self.assertTrue(first.get("pseudo"))
+        self.assertEqual(first["status"], "precommit")
+        # its content is served
+        _, content = self.get("/api/content?path=" + first["path"])
+        self.assertIn("# Title", content["content"])
+
+    def test_precommit_empty_rejected(self):
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post("/api/precommit", {"message": "  "})
+        self.assertEqual(e.exception.code, 400)
+
     def test_static_shell_served(self):
         # site_dir defaults to None in make_cfg; verify 404 path handling instead
         with self.assertRaises(urllib.error.HTTPError) as e:
             self.get("/does-not-exist", token=None)
         self.assertEqual(e.exception.code, 404)
+
+CHECKERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkers")
+
+
+def run_checker_cli(name, content, args=()):
+    proc = subprocess.run([sys.executable, os.path.join(CHECKERS_DIR, name), *args],
+                          input=content, capture_output=True, text=True)
+    return proc
+
+
+class BuiltinCheckerTests(unittest.TestCase):
+    def test_loc_describe(self):
+        out = run_checker_cli("loc.py", "", ["--describe"]).stdout
+        meta = json.loads(out)
+        self.assertEqual(meta["id"], "loc")
+
+    def test_loc_flags_long_line(self):
+        content = "ok\n" + ("x" * 300) + "\n"
+        res = json.loads(run_checker_cli("loc.py", content, ["f.txt"]).stdout)
+        rules = [f["rule"] for f in res["findings"]]
+        self.assertIn("max-line-length", rules)
+        ll = [f for f in res["findings"] if f["rule"] == "max-line-length"][0]
+        self.assertEqual(ll["line"], 2)
+
+    def test_loc_flags_big_file(self):
+        content = "\n".join("line%d" % i for i in range(900)) + "\n"
+        res = json.loads(run_checker_cli("loc.py", content, ["big.txt"]).stdout)
+        self.assertTrue(any(f["rule"] == "max-file-loc" for f in res["findings"]))
+
+    def test_complexity_params_and_nesting(self):
+        content = (
+            "def big(a, b, c, d, e, f):\n"
+            "    if a:\n"
+            "        if b:\n"
+            "            if c:\n"
+            "                if d:\n"
+            "                    deep = 1\n"
+        )
+        res = json.loads(run_checker_cli("complexity.py", content, ["x.py"]).stdout)
+        rules = {f["rule"] for f in res["findings"]}
+        self.assertIn("max-params", rules)
+        self.assertIn("max-nesting", rules)
+
+    def test_complexity_ignores_control_keywords(self):
+        # `if (a, b, c, d, e)` shouldn't be counted as a 5-param function.
+        content = "if (a):\n    pass\n"
+        res = json.loads(run_checker_cli("complexity.py", content, ["x.py"]).stdout)
+        self.assertFalse(any(f["rule"] == "max-params" for f in res["findings"]))
+
+
+class CheckerDiscoveryTests(unittest.TestCase):
+    def setUp(self):
+        self.root = tempfile.mkdtemp(prefix="ar-chk-")
+        git(self.root, "init", "-q")
+        git(self.root, "config", "user.email", "t@t.com")
+        git(self.root, "config", "user.name", "t")
+        with open(os.path.join(self.root, "f.py"), "w") as fh:
+            fh.write("x = 1\n")
+        git(self.root, "add", "-A")
+        git(self.root, "commit", "-qm", "init")
+        self.cfg = make_cfg(self.root)
+
+    def test_discovers_builtins(self):
+        ids = {c["id"] for c in server.discover_checkers(self.cfg)}
+        self.assertIn("loc", ids)
+        self.assertIn("complexity", ids)
+
+    def test_run_checkers_structure(self):
+        out = server.run_checkers(self.cfg, "f.py")
+        self.assertEqual(out["path"], "f.py")
+        ids = {r["id"] for r in out["results"]}
+        self.assertIn("loc", ids)
+        for r in out["results"]:
+            self.assertIn("findings", r)
+
+    def test_run_checkers_rejects_missing_file(self):
+        with self.assertRaises(server.HttpError):
+            server.run_checkers(self.cfg, "nope.py")
+
+    def test_user_checker_discovered(self):
+        cdir = self.cfg.user_checkers_dir
+        os.makedirs(cdir, exist_ok=True)
+        with open(os.path.join(cdir, "mine.py"), "w") as fh:
+            fh.write(
+                "import json,sys\n"
+                "if '--describe' in sys.argv:\n"
+                "    print(json.dumps({'id':'mine','name':'Mine','description':'d'}))\n"
+                "else:\n"
+                "    print(json.dumps({'findings':[{'line':1,'severity':'info','rule':'r','message':'hi'}]}))\n"
+            )
+        ids = {c["id"] for c in server.discover_checkers(self.cfg)}
+        self.assertIn("mine", ids)
+        out = server.run_checkers(self.cfg, "f.py", ["mine"])
+        self.assertEqual(out["results"][0]["findings"][0]["message"], "hi")
+
+    def test_check_all_changed_files(self):
+        # Two changed files with violations; check-all should aggregate them.
+        long_line = "x = '" + ("y" * 300) + "'\n"
+        with open(os.path.join(self.root, "a.py"), "w") as fh:
+            fh.write(long_line)
+        with open(os.path.join(self.root, "b.py"), "w") as fh:
+            fh.write("def f(a, b, c, d, e, f):\n    return 1\n")
+        out = server.run_checkers_all(self.cfg, ["loc", "complexity"])
+        paths = {f["path"] for f in out["files"]}
+        self.assertIn("a.py", paths)
+        self.assertIn("b.py", paths)
+        self.assertGreaterEqual(out["summary"]["warnings"], 2)
+        self.assertEqual(out["summary"]["filesWithFindings"], len(out["files"]))
 
 
 if __name__ == "__main__":

@@ -62,12 +62,17 @@
   // ---- state ------------------------------------------------------------
   var state = {
     manifest: null,
-    current: null,        // manifest entry
-    mode: null,           // 'full' | 'diff' | 'preview'
+    current: null,        // manifest/tree entry
+    mode: null,           // 'full' | 'diff' | 'preview' | 'tree'
     content: null,        // text content of current file
     comments: [],         // comments for current file
     allComments: [],      // all comments (for file-list dots)
-    anchor: null          // {line, range:{start,end}|null, side}
+    anchor: null,         // {line, range:{start,end}|null, side}
+    fileMode: "changed",  // 'changed' | 'all'
+    tree: null,           // cached /api/tree result
+    checkers: [],         // available checker plugins
+    checkSelection: null, // {id: bool} which checkers to run
+    checkResults: {}      // path -> [{id, name, findings, error?}]
   };
 
   // ---- connection / manifest -------------------------------------------
@@ -86,9 +91,26 @@
     }
     try {
       await reloadManifest();
+      await loadCheckers();
     } catch (e) {
       showNotice("Failed to load manifest: " + e.message, true);
     }
+  }
+
+  // Discover available checker plugins once (built-in + user checkers).
+  async function loadCheckers() {
+    try {
+      var data = await apiGet("/api/checkers");
+      state.checkers = data.checkers || [];
+      if (!state.checkSelection) {
+        state.checkSelection = {};
+        state.checkers.forEach(function (c) { state.checkSelection[c.id] = true; });
+      }
+    } catch (e) { state.checkers = []; }
+    buildChecksMenu();
+    // Keep the checks control available whenever any checker exists, so the
+    // "Run on all changed files" action is always reachable.
+    $("checks").style.display = state.checkers.length ? "" : "none";
   }
 
   // Fetch the manifest + comments and re-render the file list. Returns the
@@ -138,7 +160,7 @@
   function renderFileList() {
     var ul = $("files");
     clear(ul);
-    var files = state.manifest.files || [];
+    var files = (state.manifest && state.manifest.files) || [];
     if (!files.length) {
       ul.appendChild(el("li", "muted", "No changes vs " + state.manifest.base));
       return;
@@ -146,16 +168,22 @@
     files.forEach(function (f) {
       var li = el("li");
       li.dataset.path = f.path;
+      if (f.pseudo) li.classList.add("pseudo");
       if (commentsForPath(f.path).length) li.classList.add("has-comments");
-      var letter = (f.status || "?")[0].toUpperCase();
+      var letter = f.status === "precommit" ? "\u270e" : (f.status || "?")[0].toUpperCase();
       li.appendChild(el("span", "badge " + f.status, letter));
       var name = el("span", "name");
-      var slash = f.path.lastIndexOf("/");
-      if (slash >= 0) {
-        name.appendChild(el("span", "path-dir", f.path.slice(0, slash + 1)));
+      if (f.pseudo && f.label) {
+        name.appendChild(document.createTextNode(f.label));
+        name.title = f.label + " (" + f.path + ")";
+      } else {
+        var slash = f.path.lastIndexOf("/");
+        if (slash >= 0) {
+          name.appendChild(el("span", "path-dir", f.path.slice(0, slash + 1)));
+        }
+        name.appendChild(document.createTextNode(f.path.slice(slash + 1)));
+        name.title = f.path + (f.oldPath ? " (was " + f.oldPath + ")" : "");
       }
-      name.appendChild(document.createTextNode(f.path.slice(slash + 1)));
-      name.title = f.path + (f.oldPath ? " (was " + f.oldPath + ")" : "");
       li.appendChild(name);
       li.appendChild(el("span", "dot"));
       li.addEventListener("click", function () { openFile(f); });
@@ -167,19 +195,26 @@
     Array.prototype.forEach.call($("files").children, function (li) {
       li.classList.toggle("active", li.dataset.path === path);
     });
+    Array.prototype.forEach.call($("tree").querySelectorAll(".tree-file"), function (row) {
+      row.classList.toggle("active", row.dataset.path === path);
+    });
   }
 
   // ---- open a file ------------------------------------------------------
   function availableModes(f) {
+    if (f.pseudo) return ["preview", "full"];  // proposed commit message: no diff
+    var changed = !!f.status;
     if (f.renderer === "markdown") return ["preview", "full", "diff"];
     if (f.renderer === "html") return ["preview", "full", "diff"];
     if (f.renderer === "json") return ["tree", "full", "diff"];
-    return ["diff", "full"];
+    // Unchanged files (browsed from the tree) have no diff; show source first.
+    return changed ? ["diff", "full"] : ["full", "diff"];
   }
 
   async function openFile(f) {
     state.current = f;
     state.anchor = null;
+    state.content = null;
     markActiveFile(f.path);
     $("cur-path").textContent = f.path;
     state.comments = commentsForPath(f.path);
@@ -187,7 +222,83 @@
     state.mode = modes[0];
     renderModeTabs(modes);
     renderCommentPanel();
+    // Checks control stays visible (for "run on all"); the per-file button is
+    // only enabled for real text files (not the pseudo commit message/binaries).
+    var canCheck = !f.pseudo && f.kind !== "binary" && state.checkers.length > 0;
+    $("checks").style.display = state.checkers.length ? "" : "none";
+    $("run-checks").disabled = !canCheck;
+    $("run-checks").title = canCheck ? "Run code checks on this file"
+      : "This file can't be checked; use the ▾ menu to run on all changed files";
+    $("checks-menu").hidden = true;
     await loadAndRender();
+  }
+
+  // ---- file-mode toggle (Changed | All files) ---------------------------
+  function setFileMode(mode) {
+    state.fileMode = mode;
+    $("tab-changed").classList.toggle("active", mode === "changed");
+    $("tab-all").classList.toggle("active", mode === "all");
+    $("files").hidden = mode !== "changed";
+    $("tree").hidden = mode !== "all";
+    if (mode === "all") renderTree();
+  }
+
+  async function renderTree() {
+    var container = $("tree");
+    if (!state.tree) {
+      clear(container);
+      container.appendChild(el("div", "muted small", "loading…"));
+      try {
+        state.tree = await apiGet("/api/tree");
+      } catch (e) {
+        clear(container);
+        container.appendChild(el("div", "notice error", "Failed to load file tree: " + e.message));
+        return;
+      }
+    }
+    clear(container);
+    container.appendChild(buildTreeList(state.tree.entries, 0));
+    if (state.current) markActiveFile(state.current.path);
+  }
+
+  function buildTreeList(entries, depth) {
+    var ul = el("ul", "tree-list");
+    entries.forEach(function (entry) { ul.appendChild(buildTreeNode(entry, depth)); });
+    return ul;
+  }
+
+  function buildTreeNode(entry, depth) {
+    var li = el("li", "tree-node");
+    if (entry.type === "dir") {
+      var row = el("div", "tree-row tree-dir");
+      // Show 2 levels expanded; deeper folders collapse until clicked.
+      var collapsed = depth >= 1;
+      var caret = el("span", "tree-caret", collapsed ? "\u25b8" : "\u25be");
+      row.appendChild(caret);
+      row.appendChild(el("span", "tree-name", entry.name + "/"));
+      li.appendChild(row);
+      var childUl = buildTreeList(entry.children || [], depth + 1);
+      childUl.hidden = collapsed;
+      li.appendChild(childUl);
+      row.addEventListener("click", function () {
+        childUl.hidden = !childUl.hidden;
+        caret.textContent = childUl.hidden ? "\u25b8" : "\u25be";
+      });
+    } else {
+      var frow = el("div", "tree-row tree-file");
+      frow.dataset.path = entry.path;
+      if (entry.status) {
+        frow.appendChild(el("span", "badge " + entry.status, entry.status[0].toUpperCase()));
+      } else {
+        frow.appendChild(el("span", "tree-indent"));
+      }
+      frow.appendChild(el("span", "tree-name", entry.name));
+      frow.appendChild(el("span", "dot"));
+      if (commentsForPath(entry.path).length) frow.classList.add("has-comments");
+      frow.addEventListener("click", function () { openFile(entry); });
+      li.appendChild(frow);
+    }
+    return li;
   }
 
   function renderModeTabs(modes) {
@@ -221,8 +332,200 @@
         await renderFull();
       }
       renderFileLevelThread();
+      renderChecksSummary();
     } catch (e) {
       showNotice("Failed to render " + state.current.path + ": " + e.message, true);
+    }
+  }
+
+  // ---- checker plugins (UI) --------------------------------------------
+  function buildChecksMenu() {
+    var menu = $("checks-menu");
+    clear(menu);
+    if (!state.checkers.length) {
+      menu.appendChild(el("div", "ck-empty", "No checkers found. Add CLIs to .agentic-review/checkers/"));
+      return;
+    }
+    state.checkers.forEach(function (c) {
+      var row = el("label", "ck");
+      var cb = el("input");
+      cb.type = "checkbox";
+      cb.checked = !!(state.checkSelection && state.checkSelection[c.id]);
+      cb.addEventListener("change", function () {
+        state.checkSelection[c.id] = cb.checked;
+      });
+      row.appendChild(cb);
+      var txt = el("div");
+      txt.appendChild(el("div", "", c.name + (c.builtin ? "" : " (custom)")));
+      if (c.description) txt.appendChild(el("div", "ck-desc", c.description));
+      row.appendChild(txt);
+      menu.appendChild(row);
+    });
+    var all = el("button", "ck-all", "▶ Run on all changed files");
+    all.addEventListener("click", function () { $("checks-menu").hidden = true; runAllChecks(); });
+    menu.appendChild(all);
+  }
+
+  function selectedCheckerIds() {
+    return state.checkers
+      .filter(function (c) { return state.checkSelection[c.id]; })
+      .map(function (c) { return c.id; });
+  }
+
+  async function runChecks() {
+    if (!state.current) return;
+    if (state.current.pseudo) return;
+    var ids = selectedCheckerIds();
+    if (!ids.length) { alert("Select at least one checker."); return; }
+    var btn = $("run-checks");
+    var prev = btn.textContent;
+    btn.textContent = "running…"; btn.disabled = true;
+    try {
+      var data = await apiGet("/api/check?path=" + encodeURIComponent(state.current.path) +
+        "&checkers=" + encodeURIComponent(ids.join(",")));
+      state.checkResults[state.current.path] = data.results || [];
+      await loadAndRender();  // re-render so inline markers + summary appear
+    } catch (e) {
+      alert("Checks failed: " + e.message);
+    } finally {
+      btn.textContent = prev; btn.disabled = false;
+    }
+  }
+
+  // Repo-level: run the selected checkers across every changed file and show a
+  // consolidated report. Each finding links to the file/line.
+  async function runAllChecks() {
+    var ids = selectedCheckerIds();
+    if (!ids.length) { alert("Select at least one checker."); return; }
+    var c = $("content");
+    clear(c);
+    c.appendChild(el("div", "notice", "running checks on all changed files…"));
+    var data;
+    try {
+      data = await apiGet("/api/check-all?checkers=" + encodeURIComponent(ids.join(",")));
+    } catch (e) {
+      showNotice("Check-all failed: " + e.message, true);
+      return;
+    }
+    state.current = null;
+    markActiveFile(null);
+    $("cur-path").textContent = "Checks · all changed files";
+    clear($("modes"));
+    $("run-checks").disabled = true;
+    renderCheckAllReport(data);
+  }
+
+  function renderCheckAllReport(data) {
+    var c = $("content");
+    clear(c);
+    var s = data.summary || { errors: 0, warnings: 0, filesWithFindings: 0 };
+    var box = el("div", "checks-summary");
+    box.appendChild(el("div", "panel-title",
+      "All changed files vs " + data.base + " — " + s.errors + " error(s), " +
+      s.warnings + " warning(s) across " + s.filesWithFindings + " file(s)"));
+    if (!data.files.length) {
+      box.appendChild(el("div", "checks-ok", "✓ No issues found in changed files."));
+      c.appendChild(box);
+      return;
+    }
+    data.files.forEach(function (fileRes) {
+      var group = el("div", "checks-group");
+      var head = el("div", "ca-file");
+      head.textContent = fileRes.path;
+      head.addEventListener("click", function () { openFromManifest(fileRes.path); });
+      group.appendChild(head);
+      fileRes.results.forEach(function (r) {
+        if (r.error) {
+          var er = el("div", "check-finding");
+          er.appendChild(el("span", "sev error", "E"));
+          er.appendChild(el("span", "cf-msg", r.name + ": " + r.error));
+          group.appendChild(er);
+        }
+        (r.findings || []).forEach(function (f) {
+          var row = el("div", "check-finding");
+          row.appendChild(el("span", "cf-loc", f.line ? ("L" + f.line) : "file"));
+          row.appendChild(el("span", "sev " + f.severity, f.severity[0]));
+          row.appendChild(el("span", "cf-msg", f.message + "  (" + r.name + ")"));
+          row.addEventListener("click", function () { openFromManifest(fileRes.path, f.line); });
+          group.appendChild(row);
+        });
+      });
+      box.appendChild(group);
+    });
+    c.appendChild(box);
+  }
+
+  // Open a file by path from the current manifest (used by the check-all report).
+  function openFromManifest(path, line) {
+    var entry = ((state.manifest && state.manifest.files) || [])
+      .filter(function (f) { return f.path === path; })[0]
+      || { path: path, kind: "text", renderer: "code" };
+    setFileMode("changed");
+    openFile(entry).then(function () {
+      if (line) jumpToCheckLine(line);
+    });
+  }
+
+  function currentFindings() {
+    var results = state.checkResults[state.current && state.current.path] || [];
+    var byLine = {}, fileLevel = [], errors = 0, warnings = 0;
+    results.forEach(function (r) {
+      (r.findings || []).forEach(function (f) {
+        var item = { checker: r.name, severity: f.severity, rule: f.rule, message: f.message, line: f.line };
+        if (f.severity === "error") errors++; else if (f.severity === "warning") warnings++;
+        if (f.line) (byLine[f.line] = byLine[f.line] || []).push(item);
+        else fileLevel.push(item);
+      });
+    });
+    return { results: results, byLine: byLine, fileLevel: fileLevel, errors: errors, warnings: warnings };
+  }
+
+  function renderChecksSummary() {
+    var results = state.checkResults[state.current && state.current.path];
+    if (!results) return;  // checks not run for this file yet
+    var f = currentFindings();
+    var c = $("content");
+    var box = el("div", "checks-summary");
+    var total = f.errors + f.warnings + f.fileLevel.filter(function (x) { return x.severity === "info"; }).length;
+    box.appendChild(el("div", "panel-title",
+      "Checks: " + f.errors + " error(s), " + f.warnings + " warning(s)"));
+    var anyError = results.some(function (r) { return r.error; });
+    results.forEach(function (r) {
+      if (r.error) {
+        var er = el("div", "checks-group");
+        er.appendChild(el("span", "sev error", "ERR"));
+        er.appendChild(document.createTextNode(" " + r.name + ": " + r.error));
+        box.appendChild(er);
+      }
+    });
+    var all = f.fileLevel.concat(Object.keys(f.byLine).map(Number).sort(function (a, b) { return a - b; })
+      .reduce(function (acc, ln) { return acc.concat(f.byLine[ln]); }, []));
+    if (!all.length && !anyError) {
+      box.appendChild(el("div", "checks-ok", "✓ No issues found."));
+    }
+    if (all.length) {
+      var group = el("div", "checks-group");
+      all.forEach(function (item) {
+        var row = el("div", "check-finding");
+        row.appendChild(el("span", "cf-loc", item.line ? ("L" + item.line) : "file"));
+        row.appendChild(el("span", "sev " + item.severity, item.severity[0]));
+        row.appendChild(el("span", "cf-msg", item.message + "  (" + item.checker + ")"));
+        if (item.line) row.addEventListener("click", function () { jumpToCheckLine(item.line); });
+        group.appendChild(row);
+      });
+      box.appendChild(group);
+    }
+    // Place the summary just under any file-level comment banner.
+    c.insertBefore(box, c.firstChild);
+  }
+
+  function jumpToCheckLine(line) {
+    if (state.mode !== "full") {
+      state.mode = "full";
+      renderModeTabs(availableModes(state.current));
+      loadAndRender().then(function () { setTimeout(function () { scrollToLine(line); }, 150); });
+    } else {
+      scrollToLine(line);
     }
   }
 
@@ -373,9 +676,18 @@
       state.comments = commentsForPath(state.current.path);
       renderCommentPanel();
       renderFileList();
+      updateTreeCommentDots();
       markActiveFile(state.current.path);
       await loadAndRender();
     }
+  }
+
+  // Toggle the has-comments dot on existing tree rows without rebuilding the
+  // tree (so the user's expand/collapse state is preserved).
+  function updateTreeCommentDots() {
+    Array.prototype.forEach.call($("tree").querySelectorAll(".tree-file"), function (row) {
+      row.classList.toggle("has-comments", commentsForPath(row.dataset.path).length > 0);
+    });
   }
   // Show file-level comments as a banner at the top of the content area.
   function renderFileLevelThread() {
@@ -390,12 +702,30 @@
 
   function decorateCodeLines(container) {
     var maps = commentMaps();
+    var checks = currentFindings().byLine;
     var rows = container.querySelectorAll("table.hljs-ln tr");
     Array.prototype.forEach.call(rows, function (tr) {
       var td = tr.querySelector("td.hljs-ln-numbers");
       if (!td) return;
       var n = parseInt(td.getAttribute("data-line-number"), 10);
       td.addEventListener("click", function (ev) { onLineClick(n, ev, container); });
+      // Inline checker findings on this line (above any comment thread).
+      if (checks[n]) {
+        var severe = checks[n].some(function (f) { return f.severity === "error"; });
+        tr.classList.add(severe ? "has-error" : "has-warning");
+        var checkRow = el("tr", "check-row");
+        var ccell = el("td");
+        ccell.colSpan = 2;
+        checks[n].forEach(function (f) {
+          var line = el("div", "check-inline");
+          line.appendChild(el("span", "sev " + f.severity, f.severity[0]));
+          line.appendChild(el("span", "cf-msg", f.message + "  (" + f.checker + ")"));
+          ccell.appendChild(line);
+        });
+        checkRow.appendChild(ccell);
+        if (tr.nextSibling) tr.parentNode.insertBefore(checkRow, tr.nextSibling);
+        else tr.parentNode.appendChild(checkRow);
+      }
       if (maps.byLine[n]) {
         tr.classList.add("commented");
         var threadRow = el("tr", "thread-row");
@@ -803,18 +1133,30 @@
     });
   });
   $("reload").addEventListener("click", refreshAll);
+  $("tab-changed").addEventListener("click", function () { setFileMode("changed"); });
+  $("tab-all").addEventListener("click", function () { setFileMode("all"); });
+  $("run-checks").addEventListener("click", runChecks);
+  $("checks-toggle").addEventListener("click", function (ev) {
+    ev.stopPropagation();
+    $("checks-menu").hidden = !$("checks-menu").hidden;
+  });
+  document.addEventListener("click", function (ev) {
+    if (!$("checks").contains(ev.target)) $("checks-menu").hidden = true;
+  });
 
   // Re-sync the manifest and re-render whatever file is open (clearing any
   // cached content), so a committed/reverted change is picked up immediately.
   async function refreshAll() {
     state.content = null;
+    state.tree = null;  // force the file tree to refetch too
     try {
       await reloadManifest();
     } catch (e) {
       showNotice("Failed to refresh: " + e.message, true);
       return;
     }
-    if (state.current && manifestHas(state.current.path)) {
+    if (state.fileMode === "all") renderTree();
+    if (state.current && (manifestHas(state.current.path) || state.current.pseudo)) {
       state.comments = commentsForPath(state.current.path);
       renderCommentPanel();
       await loadAndRender();

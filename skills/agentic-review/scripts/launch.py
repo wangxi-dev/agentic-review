@@ -14,7 +14,6 @@ import argparse
 import os
 import secrets
 import sys
-import tempfile
 import time
 
 import common as C
@@ -43,13 +42,8 @@ def main(argv=None):
     if not os.path.isdir(review_root):
         C.die("review root is not a directory: %s" % review_root)
 
-    if args.comments_folder:
-        comments_dir = os.path.abspath(args.comments_folder)
-        os.makedirs(comments_dir, exist_ok=True)
-        comments_is_temp = False
-    else:
-        comments_dir = tempfile.mkdtemp(prefix="agentic-review-comments-")
-        comments_is_temp = True
+    # In-repo git-ignored work folder for comments + pre-commit messages.
+    work_dir = os.path.join(review_root, ".agentic-review")
 
     diff_base = os.environ.get("AR_DIFF_BASE", "HEAD")
     pages_origin = os.environ.get("AR_PAGES_ORIGIN", "").strip()
@@ -64,10 +58,18 @@ def main(argv=None):
         C.python_exe(), C.SERVER,
         "--root", review_root,
         "--port", str(port),
-        "--comments-dir", comments_dir,
         "--diff-base", diff_base,
         "--token", token,
     ]
+    if args.comments_folder:
+        comments_dir = os.path.abspath(args.comments_folder)
+        os.makedirs(comments_dir, exist_ok=True)
+        server_args += ["--comments-dir", comments_dir]
+        comments_is_temp = False
+    else:
+        # Server defaults comments to <work_dir>/comments.
+        comments_dir = os.path.join(work_dir, "comments")
+        comments_is_temp = True
     if pages_origin:
         server_args += ["--allow-origin", pages_origin]
 
@@ -96,6 +98,8 @@ def main(argv=None):
         "token": token,
         "commentsDir": comments_dir,
         "commentsIsTemp": comments_is_temp,
+        "workDir": work_dir,
+        "workDirIsDefault": True,
         "serverPid": proc.pid,
         "reviewRoot": review_root,
         "diffBase": diff_base,

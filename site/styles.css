@@ -74,10 +74,19 @@ aside, main { overflow: auto; min-width: 0; }
 }
 
 .panel-title {
-  padding: 0.55rem 0.8rem; font-weight: 600;
+  padding: 0.45rem 0.6rem; font-weight: 600;
   border-bottom: 1px solid var(--border); position: sticky; top: 0;
   background: var(--panel); z-index: 1;
 }
+
+/* segmented Changed | All files toggle */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.seg-btn {
+  font: inherit; font-size: 0.8rem; font-weight: 600; padding: 0.2rem 0.6rem;
+  border: 0; background: #fff; color: var(--muted); cursor: pointer; border-radius: 0;
+}
+.seg-btn + .seg-btn { border-left: 1px solid var(--border); }
+.seg-btn.active { background: var(--accent); color: #fff; }
 
 #files { list-style: none; margin: 0; padding: 0; }
 #files li {
@@ -97,11 +106,34 @@ aside, main { overflow: auto; min-width: 0; }
 .badge.deleted { color: var(--deleted); }
 .badge.modified { color: var(--modified); }
 .badge.renamed { color: var(--accent); }
+.badge.precommit { color: #8250df; }
+#files li.pseudo { background: #faf5ff; }
+#files li.pseudo .name { font-weight: 600; color: #6639ba; }
 .dot {
   flex: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); visibility: hidden;
 }
 #files li.has-comments .dot { visibility: visible; }
+
+/* all-files tree */
+#tree { padding: 0.2rem 0; font-size: 13px; }
+#tree ul { list-style: none; margin: 0; padding: 0; }
+#tree .tree-list { padding-left: 0.85rem; }
+#tree .tree-row {
+  display: flex; align-items: center; gap: 0.35rem; cursor: pointer;
+  padding: 0.15rem 0.5rem; white-space: nowrap; border-radius: 4px;
+}
+#tree .tree-row:hover { background: #eef1f4; }
+#tree .tree-file.active { background: #ddf4ff; }
+#tree .tree-caret {
+  flex: none; width: 0.9rem; color: var(--muted); user-select: none; font-size: 0.7rem;
+}
+#tree .tree-name { overflow: hidden; text-overflow: ellipsis; }
+#tree .tree-dir .tree-name { font-weight: 600; }
+#tree .tree-file .badge { width: 0.9rem; font-size: 0.7rem; }
+#tree .tree-file .tree-indent { flex: none; width: 0.9rem; }
+#tree .tree-file.has-comments .dot { visibility: visible; }
+#tree .tree-file .dot { margin-left: 0.1rem; }
 
 #viewer { display: flex; flex-direction: column; }
 #viewer-head {
@@ -111,6 +143,43 @@ aside, main { overflow: auto; min-width: 0; }
 }
 #cur-path { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
 .modes button { padding: 0.2rem 0.6rem; font-size: 0.8rem; }
+
+/* checks control */
+#checks { position: relative; display: inline-flex; }
+#checks #run-checks { font-size: 0.8rem; padding: 0.2rem 0.6rem; border-radius: 6px 0 0 6px; }
+#checks .caret { font-size: 0.8rem; padding: 0.2rem 0.4rem; border-left: 0; border-radius: 0 6px 6px 0; }
+#checks-menu {
+  position: absolute; top: 110%; right: 0; z-index: 5; min-width: 16rem;
+  background: #fff; border: 1px solid var(--border); border-radius: 8px;
+  box-shadow: 0 6px 24px rgba(0,0,0,0.12); padding: 0.5rem;
+}
+#checks-menu .ck { display: flex; gap: 0.4rem; align-items: flex-start; padding: 0.3rem; border-radius: 4px; }
+#checks-menu .ck:hover { background: var(--panel); }
+#checks-menu .ck-desc { color: var(--muted); font-size: 0.75rem; }
+#checks-menu .ck-empty { color: var(--muted); font-size: 0.8rem; padding: 0.3rem; }
+.ck-all { width: 100%; margin-top: 0.4rem; font-size: 0.8rem; padding: 0.3rem; border: 1px solid var(--accent); color: var(--accent); background: #fff; border-radius: 6px; cursor: pointer; }
+.ck-all:hover { background: #ddf4ff; }
+.ca-file { font-family: ui-monospace, monospace; font-weight: 600; padding: 0.2rem 0; cursor: pointer; color: var(--accent); }
+.ca-file:hover { text-decoration: underline; }
+
+/* check findings: summary banner + inline */
+.checks-summary { margin: 0.6rem 1rem; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
+.checks-summary .panel-title { position: static; background: var(--panel); }
+.checks-group { padding: 0.3rem 0.6rem; border-top: 1px solid var(--border); }
+.check-finding { display: flex; gap: 0.45rem; align-items: baseline; padding: 0.15rem 0; cursor: pointer; }
+.check-finding:hover .cf-msg { text-decoration: underline; }
+.cf-loc { font-family: ui-monospace, monospace; color: var(--accent); flex: none; min-width: 2.6rem; }
+.sev { flex: none; font-size: 0.7rem; font-weight: 700; text-transform: uppercase; border-radius: 3px; padding: 0 0.3rem; }
+.sev.error { color: #fff; background: var(--deleted); }
+.sev.warning { color: #5c4400; background: #f2cc60; }
+.sev.info { color: #fff; background: var(--accent); }
+.checks-ok { color: var(--added); padding: 0.3rem 0.6rem; }
+/* inline finding rows in full mode */
+tr.check-row > td { padding: 0 !important; background: #fff8f0; }
+.check-inline { margin: 0.2rem 0.4rem 0.4rem 1.6rem; display: flex; gap: 0.45rem; align-items: baseline; font-family: -apple-system, system-ui, sans-serif; }
+tr.has-error td.hljs-ln-numbers { border-left: 3px solid var(--deleted); }
+tr.has-warning td.hljs-ln-numbers { border-left: 3px solid #e0a800; }
+
 #content { padding: 0; flex: 1; }
 .empty { padding: 2rem; color: var(--muted); }
 .notice { padding: 1rem; color: var(--muted); }
@@ -137,6 +206,19 @@ tr.commented td.hljs-ln-numbers::after { content: " 💬"; font-size: 0.7em; }
 /* clickable diff line numbers + selection */
 .d2h-code-linenumber, .d2h-code-side-linenumber { cursor: pointer; }
 tr.d2h-sel td { background: var(--sel) !important; }
+/*
+ * diff2html pins line numbers with position:absolute and reserves space with a
+ * big left padding on the code line. In our scrolling viewer that detaches the
+ * numbers from the content (they don't move when you scroll). Put the line-
+ * number column back into normal table flow so it scrolls vertically with the
+ * code, and make it sticky-left so it stays visible on horizontal scroll.
+ */
+.d2h-code-linenumber {
+  position: sticky; left: 0; z-index: 1;
+}
+.d2h-code-side-linenumber { position: static; }
+.d2h-code-line { padding: 0 0.5em; width: auto; }
+.d2h-code-side-line { padding: 0 0.5em; width: auto; }
 
 /* inline comment threads (shown in full / diff / preview) */
 tr.thread-row > td { padding: 0 !important; background: #fffdf2; }

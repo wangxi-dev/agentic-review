@@ -93,13 +93,78 @@ python3 local-server/server.py --root "$PWD" \
 Comments anchored to a line/block render **inline** in full, diff, and preview
 modes.
 
+## Browsing all files
+
+The shell's file panel has two tabs: **Changed** (the diff set) and **All
+files**. "All files" shows the whole repo as a collapsible tree (built from
+`git ls-files` + untracked-but-not-ignored, so `.gitignore`'d paths — build
+output, the `.agentic-review/` work folder, secrets — are excluded). The top two
+levels expand by default; deeper folders expand on click. Any file can be opened,
+read, checked, and commented on, even if it isn't part of the diff.
+
+## Proposing a commit message (pre-commit)
+
+Before committing, the agent can stage a **proposed commit message** so the human
+reviews it like a change:
+
+```bash
+python3 skills/agentic-review/scripts/precommit.py --message "feat: ..."
+```
+
+It is written to `<repo>/.agentic-review/precommit/commit-message.md` and appears
+as a pseudo entry at the top of the file list (rendered as Markdown, commentable).
+Run `take-feedback`, revise, then commit.
+
+## Checks (pluggable code checkers)
+
+The shell can run code **checkers** on the open file ("Run checks" in the viewer
+header; pick which checkers from the ▾ menu). Findings show inline on the
+offending lines and in a summary, by severity.
+
+Built-in checkers:
+
+- **Lines of code** — flags files over **800 lines** and lines over **250
+  characters**.
+- **Code complexity** — flags **nesting deeper than 4** and functions with **more
+  than 4 parameters** (heuristic).
+
+### Writing your own checker
+
+Drop an executable CLI into `<repo>/.agentic-review/checkers/` (a `.py`, `.js`,
+`.sh`, or executable file). The bridge runs only checkers from this folder and the
+built-in one — never from the repo's tracked content. A checker must support:
+
+```text
+checker --describe        # prints {"id","name","description"} as JSON
+checker <relative-path>   # reads the file CONTENT on stdin, prints findings JSON
+```
+
+Findings format (stdout):
+
+```json
+{ "findings": [
+  { "line": 12, "severity": "warning", "rule": "max-line-length", "message": "Line is 312 chars (> 250)" },
+  { "severity": "error", "rule": "max-file-loc", "message": "File has 950 lines (> 800)" }
+] }
+```
+
+`line` is optional (omit for a file-level finding); `severity` is `error`,
+`warning`, or `info`. Thresholds for the built-ins are overridable via env vars
+(`AR_LOC_MAX_FILE`, `AR_LOC_MAX_LINE`, `AR_CX_MAX_NESTING`, `AR_CX_MAX_PARAMS`).
+
+> **Security:** checkers are executables run on your machine on demand. Only place
+> checkers you trust in `.agentic-review/checkers/`. That folder is git-ignored
+> and not populated by cloning a repo, so a reviewed repo cannot inject checkers.
+
+
 ## Layout
 
 ```text
-local-server/server.py        # loopback bridge (manifest/content/diff/comments)
+local-server/server.py        # loopback bridge (manifest/tree/content/diff/comments/checks)
+local-server/checkers/        # built-in checker CLIs (loc.py, complexity.py)
 local-server/test_server.py   # unit + end-to-end tests
 site/                         # static review shell (index.html, app.js, styles.css)
-skills/agentic-review/        # SKILL.md + scripts/ (launch, take-feedback, cleanup)
+skills/agentic-review/        # SKILL.md + scripts/ (launch, precommit, take-feedback, cleanup)
 examples/                     # sample files, one per renderer
 ```
 

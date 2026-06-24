@@ -48,6 +48,17 @@ SERVICE = "agentic-review-local-server"
 # or extend via --allow-origin / the AR_ALLOW_ORIGIN env var.
 DEFAULT_ALLOWED_ORIGINS = ("https://wangxi-dev.github.io",)
 
+# In-repo work folder (git-ignored) holding comments + pre-commit messages.
+WORK_DIR_NAME = ".agentic-review"
+PRECOMMIT_STATUS = "precommit"
+
+# Checker plugins: small CLIs that emit JSON findings for one file.
+PYTHON_EXE = sys.executable or "python3"
+CHECKER_EXTS = {".py", ".js", ".mjs", ".sh"}
+CHECKER_TIMEOUT = 15        # seconds per checker invocation
+CHECKER_MAX_OUTPUT = 1000000
+CHECKER_MAX_FINDINGS = 2000
+
 # Extension -> renderer hint for the shell.
 MARKDOWN_EXT = {".md", ".markdown", ".mdown", ".mkd"}
 HTML_EXT = {".html", ".htm"}
@@ -68,6 +79,23 @@ MAX_CONTENT_BYTES = 5 * 1024 * 1024  # refuse to inline anything bigger than 5 M
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
+
+
+def ensure_work_dir(work_dir):
+    """Create the in-repo work folder and make it self-git-ignoring.
+
+    A `.gitignore` containing `*` makes git ignore everything in the folder
+    (including the comments and pre-commit messages we keep there), so the work
+    folder never shows up as a change to the repo under review.
+    """
+    os.makedirs(work_dir, exist_ok=True)
+    gi = os.path.join(work_dir, ".gitignore")
+    if not os.path.exists(gi):
+        try:
+            with open(gi, "w", encoding="utf-8") as fh:
+                fh.write("# Created by agentic-review. Ignore everything here.\n*\n")
+        except OSError:
+            pass
 
 
 def renderer_for(path):
@@ -123,12 +151,27 @@ class Config:
         self.comment_store = args.comment_store
         self.github_repo = args.github_repo
         self.github_issue = args.github_issue
+        # Work folder inside the repo (git-ignored) for comments + pre-commit
+        # messages. Defaults to <root>/.agentic-review.
+        if args.work_dir:
+            self.work_dir = os.path.realpath(args.work_dir)
+        else:
+            self.work_dir = os.path.join(self.root, WORK_DIR_NAME)
+        self.work_dir_is_default = not args.work_dir and not args.comments_dir
+        ensure_work_dir(self.work_dir)
+        self.precommit_dir = os.path.join(self.work_dir, "precommit")
+        # Checker plugins: built-in (shipped) + user-provided (in the work dir).
+        self.builtin_checkers_dir = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "checkers")
+        self.user_checkers_dir = os.path.join(self.work_dir, "checkers")
         if args.comments_dir:
             self.comments_dir = os.path.realpath(args.comments_dir)
             os.makedirs(self.comments_dir, exist_ok=True)
             self.comments_dir_is_temp = False
         else:
-            self.comments_dir = tempfile.mkdtemp(prefix="agentic-review-comments-")
+            # Default: store comments in the in-repo work folder.
+            self.comments_dir = os.path.join(self.work_dir, "comments")
+            os.makedirs(self.comments_dir, exist_ok=True)
             self.comments_dir_is_temp = True
 
     def resolve_in_root(self, rel):
@@ -223,7 +266,286 @@ def build_manifest(cfg: Config):
                 "renderer": renderer_for(path),
             })
     files.sort(key=lambda f: f["path"])
-    return {"base": cfg.diff_base, "root": cfg.root, "files": files}
+    # Surface any pending pre-commit message(s) as pseudo entries at the top so
+    # the reviewer can read and comment on the proposed commit before it lands.
+    return {"base": cfg.diff_base, "root": cfg.root,
+            "files": precommit_entries(cfg) + files}
+
+
+def precommit_entries(cfg: Config):
+    """Pseudo manifest entries for files in the work folder's precommit/ dir."""
+    out = []
+    pdir = cfg.precommit_dir
+    if not os.path.isdir(pdir):
+        return out
+    try:
+        names = sorted(os.listdir(pdir))
+    except OSError:
+        return out
+    for name in names:
+        full = os.path.join(pdir, name)
+        if not os.path.isfile(full) or name.startswith("."):
+            continue
+        # Path is relative to root so the content endpoint can serve it.
+        rel = os.path.relpath(full, cfg.root).replace(os.sep, "/")
+        out.append({
+            "path": rel,
+            "status": PRECOMMIT_STATUS,
+            "kind": "text",
+            "renderer": renderer_for(name) if renderer_for(name) != "code" else "markdown",
+            "pseudo": True,
+            "label": "Proposed commit message" if len(names) == 1 else name,
+        })
+    return out
+
+
+def write_precommit(cfg: Config, message, name="commit-message.md"):
+    """Persist a proposed commit message into the work folder's precommit/ dir."""
+    if not isinstance(message, str) or not message.strip():
+        raise HttpError(400, "precommit requires non-empty 'message'")
+    # Keep the filename simple and confined to the precommit dir.
+    name = os.path.basename(name) or "commit-message.md"
+    os.makedirs(cfg.precommit_dir, exist_ok=True)
+    path = os.path.join(cfg.precommit_dir, name)
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        fh.write(message)
+    os.replace(tmp, path)
+    return os.path.relpath(path, cfg.root).replace(os.sep, "/")
+
+
+# ---------------------------------------------------------------------------
+# checker plugins
+# ---------------------------------------------------------------------------
+
+def _checker_command(path):
+    """How to invoke a checker file, by extension (cross-platform)."""
+    ext = os.path.splitext(path)[1].lower()
+    if ext == ".py":
+        return [PYTHON_EXE, path]
+    if ext in (".js", ".mjs"):
+        return ["node", path]
+    if ext == ".sh":
+        return ["bash", path]
+    return [path]  # assume directly executable
+
+
+def _describe_checker(path):
+    try:
+        proc = subprocess.run(_checker_command(path) + ["--describe"],
+                              capture_output=True, text=True, timeout=CHECKER_TIMEOUT)
+    except (OSError, subprocess.SubprocessError):
+        return {}
+    if proc.returncode == 0 and proc.stdout.strip():
+        try:
+            meta = json.loads(proc.stdout)
+            return meta if isinstance(meta, dict) else {}
+        except ValueError:
+            return {}
+    return {}
+
+
+def discover_checkers(cfg: Config):
+    """Find checker CLIs: built-in first, then user checkers in the work dir.
+
+    Only these two trusted, user-controlled locations are scanned; checkers are
+    never executed from the repo's tracked content.
+    """
+    out = []
+    seen = set()
+    for directory, builtin in ((cfg.builtin_checkers_dir, True),
+                               (cfg.user_checkers_dir, False)):
+        if not os.path.isdir(directory):
+            continue
+        for name in sorted(os.listdir(directory)):
+            if name.startswith(".") or name.startswith("_"):
+                continue
+            full = os.path.join(directory, name)
+            if not os.path.isfile(full):
+                continue
+            ext = os.path.splitext(name)[1].lower()
+            if ext not in CHECKER_EXTS and not os.access(full, os.X_OK):
+                continue
+            meta = _describe_checker(full)
+            cid = meta.get("id") or os.path.splitext(name)[0]
+            if cid in seen:
+                continue
+            seen.add(cid)
+            out.append({
+                "id": cid,
+                "name": meta.get("name", cid),
+                "description": meta.get("description", ""),
+                "builtin": builtin,
+                "_path": full,
+            })
+    return out
+
+
+def _run_one_checker(checker, rel, content):
+    entry = {"id": checker["id"], "name": checker["name"], "findings": []}
+    try:
+        proc = subprocess.run(
+            _checker_command(checker["_path"]) + [rel],
+            input=content, capture_output=True, text=True, timeout=CHECKER_TIMEOUT)
+    except subprocess.TimeoutExpired:
+        entry["error"] = "checker timed out after %ds" % CHECKER_TIMEOUT
+        return entry
+    except (OSError, subprocess.SubprocessError) as e:
+        entry["error"] = "checker failed to run: %s" % e
+        return entry
+    if proc.returncode != 0:
+        entry["error"] = (proc.stderr or "checker exited with %d" % proc.returncode).strip()[:500]
+        return entry
+    out = (proc.stdout or "")[:CHECKER_MAX_OUTPUT]
+    if not out.strip():
+        return entry
+    try:
+        parsed = json.loads(out)
+    except ValueError:
+        entry["error"] = "checker did not return valid JSON"
+        return entry
+    findings = parsed.get("findings", []) if isinstance(parsed, dict) else []
+    norm = []
+    for f in findings[:CHECKER_MAX_FINDINGS]:
+        if not isinstance(f, dict):
+            continue
+        line = f.get("line")
+        sev = f.get("severity")
+        norm.append({
+            "line": line if isinstance(line, int) and line > 0 else None,
+            "severity": sev if sev in ("error", "warning", "info") else "warning",
+            "rule": str(f.get("rule", ""))[:100],
+            "message": str(f.get("message", ""))[:500],
+        })
+    entry["findings"] = norm
+    return entry
+
+
+def run_checkers(cfg: Config, rel, ids=None):
+    real = cfg.resolve_in_root(rel)
+    if not os.path.isfile(real):
+        raise HttpError(400, "not a file: %s" % rel)
+    with open(real, "rb") as fh:
+        data = fh.read()
+    if looks_binary(data):
+        raise HttpError(415, "binary file")
+    content = data.decode("utf-8", "replace")
+    checkers = discover_checkers(cfg)
+    if ids:
+        wanted = set(ids)
+        checkers = [c for c in checkers if c["id"] in wanted]
+    results = [_run_one_checker(c, rel, content) for c in checkers]
+    return {"path": rel, "results": results}
+
+
+def run_checkers_all(cfg: Config, ids=None):
+    """Run the selected checkers across every changed text file (repo-level)."""
+    manifest = build_manifest(cfg)
+    files = []
+    errors = 0
+    warnings = 0
+    for entry in manifest["files"]:
+        # Skip pseudo (pre-commit), deleted, and binary-by-extension files.
+        if entry.get("pseudo") or entry.get("status") == "deleted" or entry.get("kind") == "binary":
+            continue
+        real = os.path.join(cfg.root, entry["path"].replace("/", os.sep))
+        if not os.path.isfile(real):
+            continue
+        try:
+            res = run_checkers(cfg, entry["path"], ids)
+        except HttpError:
+            continue  # e.g. binary detected at read time
+        nf = 0
+        for r in res["results"]:
+            for f in r["findings"]:
+                nf += 1
+                if f["severity"] == "error":
+                    errors += 1
+                elif f["severity"] == "warning":
+                    warnings += 1
+        if nf:
+            files.append(res)
+    return {"base": manifest["base"], "files": files,
+            "summary": {"errors": errors, "warnings": warnings,
+                        "filesWithFindings": len(files)}}
+
+
+def changed_status_map(cfg: Config):
+    """Map path -> change status (modified/added/deleted/renamed) vs the base."""
+    if not is_git_repo(cfg):
+        return {}
+    out = {}
+    proc = git(cfg, "diff", "--name-status", "-z", cfg.diff_base)
+    tokens = proc.stdout.split("\x00")
+    i = 0
+    while i < len(tokens):
+        code = tokens[i]
+        if not code:
+            i += 1
+            continue
+        letter = code[0]
+        status = _STATUS_MAP.get(letter, "modified")
+        if letter in ("R", "C"):
+            out[tokens[i + 2]] = status
+            i += 3
+        else:
+            out[tokens[i + 1]] = status
+            i += 2
+    if cfg.include_untracked:
+        u = git(cfg, "ls-files", "--others", "--exclude-standard", "-z")
+        for path in u.stdout.split("\x00"):
+            if path and path not in out:
+                out[path] = "added"
+    return out
+
+
+def build_file_tree(cfg: Config):
+    """List ALL reviewable files as a nested tree.
+
+    Files come from git (tracked + untracked-but-not-ignored), so .gitignore is
+    respected — ignored paths like build output and the git-ignored .secrets/
+    folder are not exposed. Directory nodes are derived from the file paths.
+    """
+    if not is_git_repo(cfg):
+        raise HttpError(400, "root is not a git repository: %s" % cfg.root)
+    status_map = changed_status_map(cfg)
+    paths = set()
+    for p in git(cfg, "ls-files", "-z").stdout.split("\x00"):
+        if p:
+            paths.add(p)
+    if cfg.include_untracked:
+        for p in git(cfg, "ls-files", "--others", "--exclude-standard", "-z").stdout.split("\x00"):
+            if p:
+                paths.add(p)
+    # Deleted files are gone from the working tree but worth showing in review.
+    for p, status in status_map.items():
+        if status == "deleted":
+            paths.add(p)
+
+    root = {"dirs": {}, "files": []}
+    for p in paths:
+        parts = p.split("/")
+        node = root
+        cur = ""
+        for part in parts[:-1]:
+            cur = (cur + "/" + part) if cur else part
+            node = node["dirs"].setdefault(part, {"path": cur, "dirs": {}, "files": []})
+        node["files"].append({
+            "name": parts[-1], "path": p, "type": "file",
+            "kind": kind_hint(p), "renderer": renderer_for(p),
+            "status": status_map.get(p),
+        })
+    return {"root": cfg.root, "base": cfg.diff_base, "entries": _serialize_tree(root)}
+
+
+def _serialize_tree(node):
+    dirs = []
+    for name in sorted(node["dirs"].keys(), key=str.lower):
+        child = node["dirs"][name]
+        dirs.append({"name": name, "path": child["path"], "type": "dir",
+                     "children": _serialize_tree(child)})
+    files = sorted(node["files"], key=lambda f: f["name"].lower())
+    return dirs + files
 
 
 def read_content(cfg: Config, rel):
@@ -646,12 +968,28 @@ class Handler(BaseHTTPRequestHandler):
         cfg = self.cfg
         if path == "/api/manifest" and method == "GET":
             self._send_json(200, build_manifest(cfg))
+        elif path == "/api/tree" and method == "GET":
+            self._send_json(200, build_file_tree(cfg))
         elif path == "/api/content" and method == "GET":
             rel = (query.get("path") or [None])[0]
             self._send_json(200, read_content(cfg, rel))
         elif path == "/api/diff" and method == "GET":
             rel = (query.get("path") or [None])[0]
             self._send_json(200, read_diff(cfg, rel))
+        elif path == "/api/checkers" and method == "GET":
+            checkers = [{"id": c["id"], "name": c["name"],
+                         "description": c["description"], "builtin": c["builtin"]}
+                        for c in discover_checkers(cfg)]
+            self._send_json(200, {"checkers": checkers})
+        elif path == "/api/check" and method == "GET":
+            rel = (query.get("path") or [None])[0]
+            sel = (query.get("checkers") or [None])[0]
+            ids = [s for s in sel.split(",") if s] if sel else None
+            self._send_json(200, run_checkers(cfg, rel, ids))
+        elif path == "/api/check-all" and method == "GET":
+            sel = (query.get("checkers") or [None])[0]
+            ids = [s for s in sel.split(",") if s] if sel else None
+            self._send_json(200, run_checkers_all(cfg, ids))
         elif path == "/api/comments" and method == "GET":
             self._send_json(200, {"comments": self.store.list()})
         elif path == "/api/comments" and method == "POST":
@@ -677,6 +1015,11 @@ class Handler(BaseHTTPRequestHandler):
             if not existed:
                 raise HttpError(404, "comment not found: %s" % cid)
             self._send_json(200, {"status": "ok", "id": cid})
+        elif path == "/api/precommit" and method == "POST":
+            body = self._read_json_body() or {}
+            rel = write_precommit(cfg, body.get("message"),
+                                  body.get("name") or "commit-message.md")
+            self._send_json(200, {"status": "ok", "path": rel})
         elif path == "/api/cleanup" and method == "POST":
             self._send_json(200, {"status": "ok"})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
@@ -728,7 +1071,9 @@ def parse_args(argv):
                    default=int(os.environ.get("AR_PORT", "8900")),
                    help="loopback port (default: 8900)")
     p.add_argument("--comments-dir", default=os.environ.get("AR_COMMENTS_DIR"),
-                   help="directory to store comment JSON files (default: a temp dir)")
+                   help="directory to store comment JSON files (default: <work-dir>/comments)")
+    p.add_argument("--work-dir", default=os.environ.get("AR_WORK_DIR"),
+                   help="in-repo git-ignored work folder (default: <root>/.agentic-review)")
     p.add_argument("--diff-base", default=os.environ.get("AR_DIFF_BASE", "HEAD"),
                    help="git ref to diff against (default: HEAD = working tree vs HEAD)")
     p.add_argument("--allow-origin", action="append",
@@ -780,6 +1125,7 @@ def main(argv=None):
     print("  listening : http://127.0.0.1:%d" % cfg.port)
     print("  root      : %s" % cfg.root)
     print("  diff base : %s" % cfg.diff_base)
+    print("  work dir  : %s" % cfg.work_dir)
     if cfg.comment_store == "github":
         print("  comments  : github issue %s#%s" % (cfg.github_repo, cfg.github_issue))
     else:

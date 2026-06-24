@@ -33,15 +33,26 @@
   </header>
 
   <div id="layout">
-    <aside id="filelist" aria-label="Changed files">
-      <div class="panel-title">Changed files</div>
+    <aside id="filelist" aria-label="Files">
+      <div class="panel-title">
+        <span class="seg" role="tablist">
+          <button id="tab-changed" class="seg-btn active" role="tab">Changed</button>
+          <button id="tab-all" class="seg-btn" role="tab">All files</button>
+        </span>
+      </div>
       <ul id="files"></ul>
+      <div id="tree" hidden></div>
     </aside>
 
     <main id="viewer">
       <div id="viewer-head">
         <span id="cur-path" class="muted">Select a file</span>
         <span class="spacer"></span>
+        <div id="checks">
+          <button id="run-checks" title="Run code checks on this file">▷ Run checks</button>
+          <button id="checks-toggle" class="caret" title="Choose checks">▾</button>
+          <div id="checks-menu" hidden></div>
+        </div>
         <div id="modes" class="modes" role="tablist"></div>
       </div>
       <div id="content"><div class="empty">No file selected.</div></div>

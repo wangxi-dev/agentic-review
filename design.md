@@ -57,12 +57,34 @@ anchored line/block in every mode.
 The server bridges the UI and local resources:
 
 - **List** the files under review (a manifest the shell can render), e.g. the set
-  of changed files in the working tree.
+  of changed files in the working tree, plus an **all-files tree** of the whole
+  repo (git-ignored paths excluded) for browsing beyond the diff.
 - **Load** file content (text files only) and, for diff mode, the corresponding
   diff.
-- **Save** comments POSTed by the shell into the configured comments store (a temp
-  folder by default).
+- **Save** comments POSTed by the shell into the configured comments store.
+- **Stage** a proposed commit message (pre-commit) as a pseudo file change so the
+  human can review it before the agent commits.
+- **Run checkers** — pluggable code-check CLIs (built-in + user-provided) whose
+  JSON findings the shell renders inline and in a summary.
 - **Shut down** and clean up on request.
+
+### Work folder
+
+Comments, pre-commit messages, and user checkers live in a git-ignored
+`<repo>/.agentic-review/` folder (made self-ignoring via its own `.gitignore`), so
+the review's own artifacts never appear as changes to the repo under review.
+Cleanup removes the ephemeral `comments/` and `precommit/`, preserving
+`checkers/`.
+
+### Checker plugins
+
+A checker is a small CLI run on one file: `checker --describe` returns
+`{id,name,description}`; `checker <relpath>` reads the file content on stdin and
+prints `{"findings":[{line?,severity,rule,message}]}`. Built-ins cover lines of
+code and complexity; users drop their own under `.agentic-review/checkers/`. The
+server only executes checkers from the built-in directory and that work folder —
+never from the reviewed repo's tracked content — and runs them on demand with a
+timeout.
 
 ## Skill commands
 

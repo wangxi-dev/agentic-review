@@ -49,7 +49,19 @@ def do_cleanup(force=False, quiet=False):
         C.terminate(pid)
 
     removed = None
-    if state.get("commentsIsTemp") and state.get("commentsDir") \
+    # Remove only the ephemeral review artifacts (comments + pre-commit
+    # messages); preserve user checkers in <work>/checkers and the .gitignore.
+    work_dir = state.get("workDir")
+    if state.get("workDirIsDefault") and work_dir and os.path.isdir(work_dir):
+        for sub in ("comments", "precommit"):
+            shutil.rmtree(os.path.join(work_dir, sub), ignore_errors=True)
+        removed = work_dir + " (comments + precommit)"
+        # If nothing of value remains (no user checkers), drop the whole folder.
+        leftover = [n for n in os.listdir(work_dir) if n != ".gitignore"]
+        if not leftover:
+            shutil.rmtree(work_dir, ignore_errors=True)
+            removed = work_dir
+    elif state.get("commentsIsTemp") and state.get("commentsDir") \
             and os.path.isdir(state["commentsDir"]):
         shutil.rmtree(state["commentsDir"], ignore_errors=True)
         removed = state["commentsDir"]
@@ -58,7 +70,7 @@ def do_cleanup(force=False, quiet=False):
     if not quiet:
         print("agentic-review: session cleaned up.")
         if removed:
-            print("  removed temp comments: %s" % removed)
+            print("  removed: %s" % removed)
         elif state.get("commentsDir"):
             print("  kept comments store: %s" % state["commentsDir"])
     return 0

@@ -46,6 +46,39 @@ Add an explicit, per-file opt-in to run scripts.
   iframe on toggle. Make the risk explicit in the UI copy.
 - Note: never combine `allow-scripts` with `allow-same-origin` for reviewed code.
 
+### 4. Checks as repo-level gates (CI-style) — partially done
+Reviewer wants checkers to behave like CI gates, not just per-file lint.
+**Done so far:** `GET /api/check-all` runs the selected per-file checkers across
+every changed file; the shell's checks ▾ menu has "Run on all changed files" with
+a consolidated, click-through report. Built-ins `loc` and `complexity` stay
+per-file.
+**Still to do:**
+- **Repo-scoped checkers** (e.g. `build pass`, `test pass`). Extend the checker
+  contract with a `scope` in `--describe`: `"file"` (current; content on stdin) vs
+  `"repo"` (run once for the whole repo, no stdin; receives the repo root and the
+  list of changed paths as args/JSON). The server runs repo-scoped checkers once
+  in check-all and shows a single pass/fail row. Ship example `build`/`test`
+  checkers under `examples/checkers/` that shell out to the project's build/test.
+- **Findings → comments.** Add a "file as comment" action on a finding (and a bulk
+  "file all") that POSTs `/api/comments` anchored to the path/line, so a violation
+  becomes a tracked review comment the agent reads back via `take-feedback`. Guard
+  against duplicates (dedupe by rule+path+line).
+- **Whitelist / manual approval.** Persist approved or whitelisted violations in
+  `<repo>/.agentic-review/checks-whitelist.json` (keyed by a stable fingerprint:
+  checker id + rule + path + a content hash of the offending line, so it survives
+  line moves). The server filters whitelisted findings out of check-all (or marks
+  them "approved"); the shell offers "approve / whitelist" on a finding and a view
+  of the whitelist. Decide whitelist granularity (per-line vs per-rule-per-file)
+  and whether the whitelist is committed (shared) or git-ignored (local) — likely
+  committed so the gate is shared, which means it should live OUTSIDE the
+  git-ignored work folder (e.g. `.agentic-review-allow.json` at repo root).
+
+## Tech debt
+- `local-server/server.py` (~1.2k lines) and `site/app.js` (~1.2k lines) now
+  exceed the project's own 800-LoC checker. Split them: server into modules
+  (manifest/tree, content/diff, comments+stores, checkers, http), app.js into
+  ES modules (api, filelist/tree, viewer/renderers, comments, checks).
+
 ## Smaller follow-ups
 
 - Comment edit currently only edits text; consider re-anchoring (move a comment to
