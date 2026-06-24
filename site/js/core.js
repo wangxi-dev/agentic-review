@@ -82,7 +82,8 @@ export var state = {
   checkers: [],         // available checker plugins
   checkSelection: null, // {id: bool} which checkers to run
   checkResults: {},     // path -> [{id, name, findings, error?}]
-  jsonDiffRaw: false     // JSON diff: show the raw line diff instead of expanded
+  jsonDiffRaw: false,    // JSON diff: show the raw line diff instead of expanded
+  htmlRunScripts: false  // html preview: per-file opt-in to allow-scripts sandbox
 };
 
 // ---- connection status / notices -------------------------------------

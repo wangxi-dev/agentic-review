@@ -87,7 +87,8 @@ python3 local-server/server.py --root "$PWD" \
 # open http://127.0.0.1:8900/review.html  and browse examples/:
 #   code files  -> full / diff (syntax highlighting, click a line to comment)
 #   sample.md   -> preview (click a block to comment; renders Mermaid), full, diff
-#   sample.html -> preview (sandboxed iframe; scripts blocked), full, diff
+#   sample.html -> preview (sandboxed iframe; scripts blocked by default, with an
+#                  opt-in "⚠ Run scripts" toggle), full, diff
 #   sample.json  -> tree (collapsible JSON navigator), full, diff
 #   oneline.json -> a minified one-liner: the raw diff is one unreadable line,
 #                   while the default *expanded* diff pretty-prints both sides

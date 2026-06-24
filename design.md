@@ -51,7 +51,11 @@ backend.
   isn't valid JSON). A purely reformatting change (same data, different
   whitespace) yields an empty expanded diff and is reported as "formatting only".
 - **HTML / JS / CSS** — rendered inside a sandboxed `iframe` so the reviewed code
-  never runs in the shell's own origin.
+  never runs in the shell's own origin. Scripts are blocked by default
+  (`sandbox=""`); an explicit per-file **"⚠ Run scripts"** toggle re-creates the
+  iframe with `sandbox="allow-scripts"` (never `allow-same-origin`, so the page
+  still cannot reach the shell's origin, cookies, or the bridge token) for when an
+  interactive page needs its JS to render.
 
 Comments can be anchored to a line (or range) in *full* and *diff* modes, or to a
 rendered block in markdown *preview* mode, and are shown **inline** next to the

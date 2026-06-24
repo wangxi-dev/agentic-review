@@ -13,11 +13,13 @@
   <h1>Sample HTML page</h1>
   <div class="card">
     <p>This renders inside a sandboxed <code>&lt;iframe&gt;</code>. The script
-       below is intentionally blocked by the sandbox.</p>
+       below is blocked by default; use the <strong>⚠ Run scripts</strong>
+       toggle above the preview to allow it.</p>
     <button onclick="document.body.style.background='red'">Try to run script</button>
   </div>
   <script>
-    // This must NOT execute in the review shell — the sandbox blocks it.
+    // Blocked by default (sandbox=""). Runs only after you opt in via the
+    // "⚠ Run scripts" toggle, which switches the iframe to sandbox="allow-scripts".
     document.body.style.background = "red";
   </script>
 </body>

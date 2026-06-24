@@ -279,6 +279,13 @@ tr.thread-row > td { padding: 0 !important; background: #fffdf2; }
 iframe.sandbox { width: 100%; height: 70vh; border: 0; background: #fff; }
 .preview-note { padding: 0.4rem 1rem; color: var(--muted); font-size: 0.8rem; border-bottom: 1px solid var(--border); }
 
+/* html preview header: "run scripts" opt-in + risk note */
+.preview-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 1rem; border-bottom: 1px solid var(--border); }
+.preview-bar .preview-note { padding: 0; border: 0; flex: 1; }
+.run-scripts-toggle { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel, #fff); color: inherit; cursor: pointer; white-space: nowrap; }
+.run-scripts-toggle:hover { border-color: #d29922; }
+.run-scripts-toggle.armed { border-color: #d29922; background: #fff8e6; color: #9a6700; font-weight: 600; }
+
 /* JSON diff toggle (expanded vs raw) */
 .json-diff-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
 .json-diff-toggle { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel, #fff); cursor: pointer; }

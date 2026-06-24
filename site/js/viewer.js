@@ -32,6 +32,7 @@ export async function openFile(f) {
   state.anchor = null;
   state.content = null;
   state.jsonDiffRaw = false;
+  state.htmlRunScripts = false;
   markActiveFile(f.path);
   $("cur-path").textContent = f.path;
   state.comments = commentsForPath(f.path);
@@ -342,15 +343,7 @@ async function renderPreview() {
   if (state.current.renderer === "markdown") {
     renderMarkdownBlocks(c, got.data.content);
   } else if (state.current.renderer === "html") {
-    var note = el("div", "preview-note",
-      "Rendered in a sandboxed iframe (scripts disabled). Comments below are file-level; use full mode to anchor to a line.");
-    c.appendChild(note);
-    var frame = el("iframe", "sandbox");
-    frame.setAttribute("sandbox", "");           // no scripts, no same-origin
-    frame.setAttribute("referrerpolicy", "no-referrer");
-    frame.srcdoc = got.data.content;
-    c.appendChild(frame);
-    var maps = commentMaps();
+    renderHtmlPreview(c, got.data.content);
     var lineComments = state.comments.filter(function (cm) { return commentLine(cm) != null; });
     if (lineComments.length) {
       var below = el("div", "file-thread");
@@ -361,6 +354,41 @@ async function renderPreview() {
   } else {
     await renderFull();
   }
+}
+
+// Render reviewed HTML in a sandboxed iframe. Default: scripts disabled
+// (sandbox=""). A per-file "⚠ Run scripts" toggle re-creates the iframe with
+// sandbox="allow-scripts" so interactive pages work — but never with
+// allow-same-origin, so the reviewed page still cannot reach the shell's
+// origin, cookies, or the bridge token. Toggling re-creates the iframe so
+// scripts start fresh (and toggling off tears them down).
+function renderHtmlPreview(c, content) {
+  var run = state.htmlRunScripts === true;
+  var bar = el("div", "preview-bar");
+  var btn = el("button", run ? "run-scripts-toggle armed" : "run-scripts-toggle",
+    run ? "⚠ Scripts running · disable" : "⚠ Run scripts");
+  btn.title = run
+    ? "Re-block scripts (recreates the iframe with sandbox=\"\")"
+    : "Allow this page's scripts to run (sandbox=\"allow-scripts\", still no same-origin access)";
+  btn.addEventListener("click", function () {
+    state.htmlRunScripts = !run;
+    loadAndRender();
+  });
+  bar.appendChild(btn);
+  bar.appendChild(el("span", "preview-note",
+    run
+      ? "Scripts are ENABLED for this page (sandbox=\"allow-scripts\", no same-origin). "
+        + "It cannot reach the shell, your cookies, or the bridge token. "
+        + "Comments below are file-level; use full mode to anchor to a line."
+      : "Rendered in a sandboxed iframe (scripts disabled). Comments below are "
+        + "file-level; use full mode to anchor to a line."));
+  c.appendChild(bar);
+  var frame = el("iframe", "sandbox");
+  // Never combine allow-scripts with allow-same-origin for reviewed code.
+  frame.setAttribute("sandbox", run ? "allow-scripts" : "");
+  frame.setAttribute("referrerpolicy", "no-referrer");
+  frame.srcdoc = content;
+  c.appendChild(frame);
 }
 
 // Render markdown as per-block elements mapped to source lines, so a block
