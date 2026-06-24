@@ -15,6 +15,8 @@
   <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
   <!-- Sanitizer (markdown + html output) -->
   <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <!-- Mermaid diagrams (rendered in the markdown preview pane only, strict mode) -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
 
   <!-- Diff rendering -->
   <link rel="stylesheet"
@@ -22,8 +24,7 @@
   <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html.min.js"></script>
 
   <link rel="stylesheet" href="styles.css" />
-</head>
-<body>
+</head><body>
   <header id="topbar">
     <strong>agentic-review</strong>
     <span id="conn" class="pill">connecting…</span>
@@ -82,6 +83,6 @@
     </aside>
   </div>
 
-  <script src="app.js"></script>
+  <script type="module" src="app.js"></script>
 </body>
 </html>

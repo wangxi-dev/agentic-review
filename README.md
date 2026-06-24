@@ -86,7 +86,7 @@ python3 local-server/server.py --root "$PWD" \
   --diff-base "$(git hash-object -t tree /dev/null)" --port 8900
 # open http://127.0.0.1:8900/review.html  and browse examples/:
 #   code files  -> full / diff (syntax highlighting, click a line to comment)
-#   sample.md   -> preview (click a block to comment), full, diff
+#   sample.md   -> preview (click a block to comment; renders Mermaid), full, diff
 #   sample.html -> preview (sandboxed iframe; scripts blocked), full, diff
 #   sample.json -> tree (collapsible JSON navigator), full, diff
 ```

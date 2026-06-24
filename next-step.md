@@ -28,15 +28,12 @@ sides (stable key order) before diffing so the unified diff is line-oriented.
   offer a "raw diff" toggle. Guard: fall back to the raw diff if either side is
   invalid JSON or too large.
 
-### 2. Markdown: render Mermaid diagrams
-Render ```` ```mermaid ```` code blocks as diagrams in preview mode.
-- Sketch: load `mermaid` from the CDN (pin a version, like the other libs). After
-  the markdown is sanitized and inserted, find `pre > code.language-mermaid`,
-  hand the text to `mermaid.render`, and replace the block with the SVG.
-- Security: Mermaid manipulates DOM; keep it to the preview pane only, and run
-  `mermaid.initialize({ securityLevel: "strict" })`. Sanitize the produced SVG
-  with DOMPurify (SVG profile) before insertion. If mermaid isn't loaded, leave
-  the fenced code block as-is.
+### 2. Markdown: render Mermaid diagrams — ✅ done
+Implemented: ` ```mermaid ` fences render as diagrams in the markdown preview
+pane (pinned `mermaid@10.9.1`, `securityLevel: "strict"`, `htmlLabels: false`);
+the produced SVG is re-sanitized with DOMPurify's SVG profile before insertion.
+Invalid diagrams keep their source block with an inert error note; if mermaid
+isn't loaded the fence is left as-is. Preview pane only. See `site/js/mermaid.js`.
 
 ### 3. HTML preview: optional script execution
 Reviewers noted a fully script-blocked iframe makes interactive pages look broken.
@@ -105,9 +102,11 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
   with dev-echo behind an explicit `--allow-origin '*'` / `AR_DEV_ECHO=1` opt-in.
   Update `launch.py` to stop minting a token unless a pages origin is configured.
 - `local-server/server.py` (~1.2k lines) and `site/app.js` (~1.2k lines) now
-  exceed the project's own 800-LoC checker. Split them: server into modules
-  (manifest/tree, content/diff, comments+stores, checkers, http), app.js into
-  ES modules (api, filelist/tree, viewer/renderers, comments, checks).
+  exceed the project's own 800-LoC checker. **`app.js` is split (✅)** into ES
+  modules under `site/js/` (`core`, `manifest`, `viewer`, `comments`, `checks`,
+  `mermaid`) with `site/app.js` as the slim entry/orchestrator; each file is
+  under the 800-LoC limit. **Still to do:** split `server.py` into modules
+  (manifest/tree, content/diff, comments+stores, checkers, http).
 
 ## Smaller follow-ups
 
@@ -128,4 +127,9 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
 - Skill: `launch` / `take-feedback` / `cleanup` (cross-platform Python).
 - Comment stores: files (default) + GitHub issue (reference), both with
   list/save/update/delete.
+- Markdown preview renders Mermaid diagrams (strict mode, SVG re-sanitized;
+  `site/js/mermaid.js`).
+- Shell split into ES modules under `site/js/` (core / manifest / viewer /
+  comments / checks / mermaid); `site/app.js` is the slim entry. Each file is
+  under the project's 800-LoC checker.
 - Tests: 59 unittest cases green.

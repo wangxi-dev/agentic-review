@@ -23,4 +23,13 @@ def hello():
     return "world"
 ```
 
+## Diagram
+
+```mermaid
+flowchart LR
+    A[Agent] -->|launch| B(Bridge server)
+    B --> C{Review shell}
+    C -->|comments| A
+```
+
 > Blockquotes render too. Click any block in preview mode to anchor a comment.

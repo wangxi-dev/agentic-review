@@ -42,7 +42,8 @@ backend.
 - **Source code** — syntax-highlighted by file type. Two modes: *diff* (highlights
   the changes, e.g. from `git diff`) and *full* (shows the new file only).
 - **Markdown** — automatically formatted, rendering tables/blockquotes/code, and
-  sanitized before display.
+  sanitized before display. ` ```mermaid ` fenced blocks render as diagrams (strict
+  mode, SVG re-sanitized); if a diagram is invalid the source block is kept as-is.
 - **JSON** — a collapsible tree viewer (*tree* mode) for navigation, plus the
   usual *full* and *diff* modes.
 - **HTML / JS / CSS** — rendered inside a sandboxed `iframe` so the reviewed code

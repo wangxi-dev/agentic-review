@@ -246,6 +246,11 @@ tr.thread-row > td { padding: 0 !important; background: #fffdf2; }
 .markdown-body table { border-collapse: collapse; }
 .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 0.3rem 0.6rem; }
 .markdown-body img { max-width: 100%; }
+.markdown-body .mermaid { margin: 0.6rem 0; padding: 0.6rem; background: #fff;
+  border: 1px solid var(--border); border-radius: 6px; overflow: auto; text-align: center; }
+.markdown-body .mermaid svg { max-width: 100%; height: auto; }
+.markdown-body pre.mermaid-error { border-left: 3px solid #d1242f; }
+.markdown-body .mermaid-error-note { color: #d1242f; font-size: 0.78rem; margin: 0.4rem 0 0.2rem; }
 /* preview blocks are clickable anchors for comments */
 .md-block { position: relative; border-radius: 4px; cursor: pointer; padding: 0 0.4rem; margin: 0 -0.4rem; }
 .md-block:hover { background: #f6f8fa; }
