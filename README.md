@@ -88,7 +88,13 @@ python3 local-server/server.py --root "$PWD" \
 #   code files  -> full / diff (syntax highlighting, click a line to comment)
 #   sample.md   -> preview (click a block to comment; renders Mermaid), full, diff
 #   sample.html -> preview (sandboxed iframe; scripts blocked), full, diff
-#   sample.json -> tree (collapsible JSON navigator), full, diff
+#   sample.json  -> tree (collapsible JSON navigator), full, diff
+#   oneline.json -> a minified one-liner: the raw diff is one unreadable line,
+#                   while the default *expanded* diff pretty-prints both sides
+#                   into a clean, line-oriented diff. (A purely reformatting
+#                   change — same data, different whitespace — is detected and
+#                   reported as "formatting only" rather than a misleading
+#                   "unchanged".)
 ```
 
 Comments anchored to a line/block render **inline** in full, diff, and preview
@@ -165,11 +171,17 @@ Findings format (stdout):
 ## Layout
 
 ```text
-local-server/server.py        # loopback bridge (manifest/tree/content/diff/comments/checks)
+local-server/server.py        # loopback bridge: slim entry/orchestrator (parse args, start server)
+local-server/ar_core.py       #   constants, classification, Config, git helpers
+local-server/ar_manifest.py   #   change manifest, pre-commit pseudo files, all-files tree
+local-server/ar_content.py    #   file content + diffs (incl. expanded pretty JSON diff)
+local-server/ar_checkers.py   #   pluggable checker plugins
+local-server/ar_comments.py   #   comment stores (files + GitHub issue) + validation
+local-server/ar_http.py       #   HTTP handler (CORS/PNA, token, routing, static shell)
 local-server/checkers/        # built-in checker CLIs (loc.py, complexity.py)
 local-server/test_server.py   # unit + end-to-end tests
 site/                         # static site: index.html (overview), guideline.html (setup),
-                              #   review.html (review shell), app.js, styles.css
+                              #   review.html (review shell), app.js + js/ modules, styles.css
 skills/agentic-review/        # SKILL.md + scripts/ (launch, precommit, take-feedback, cleanup)
 examples/                     # sample files, one per renderer
 ```

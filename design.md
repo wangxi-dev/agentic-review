@@ -45,7 +45,11 @@ backend.
   sanitized before display. ` ```mermaid ` fenced blocks render as diagrams (strict
   mode, SVG re-sanitized); if a diagram is invalid the source block is kept as-is.
 - **JSON** — a collapsible tree viewer (*tree* mode) for navigation, plus the
-  usual *full* and *diff* modes.
+  usual *full* and *diff* modes. The *diff* mode defaults to an **expanded**
+  (pretty-printed) line-oriented diff so minified single-line JSON is reviewable,
+  with a toggle back to the raw git diff (falls back automatically when a side
+  isn't valid JSON). A purely reformatting change (same data, different
+  whitespace) yields an empty expanded diff and is reported as "formatting only".
 - **HTML / JS / CSS** — rendered inside a sandboxed `iframe` so the reviewed code
   never runs in the shell's own origin.
 

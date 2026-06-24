@@ -31,6 +31,7 @@ export async function openFile(f) {
   state.current = f;
   state.anchor = null;
   state.content = null;
+  state.jsonDiffRaw = false;
   markActiveFile(f.path);
   $("cur-path").textContent = f.path;
   state.comments = commentsForPath(f.path);
@@ -202,8 +203,15 @@ export function scrollToLine(line) {
 // ---- diff renderer ----------------------------------------------------
 async function renderDiff() {
   var c = $("content");
-  var data = await apiGet("/api/diff?path=" + encodeURIComponent(state.current.path));
+  var isJson = state.current.renderer === "json";
+  // JSON files default to an expanded (pretty-printed) diff so minified
+  // single-line JSON is readable; a toggle switches back to the raw line diff.
+  var wantPretty = isJson && !state.jsonDiffRaw;
+  var url = "/api/diff?path=" + encodeURIComponent(state.current.path);
+  if (wantPretty) url += "&pretty=1";
+  var data = await apiGet(url);
   clear(c);
+  if (isJson) c.appendChild(jsonDiffToggle(data, wantPretty));
   if (!data.unified || !data.unified.trim() || data.binary) {
     await renderEmptyDiff(c, data);
     return;
@@ -224,13 +232,50 @@ async function renderDiff() {
   }
 }
 
-// An empty (or binary) diff for a listed file. Distinguish binary, a genuinely
-// unchanged file, and a stale file list (e.g. the change was just committed or
-// reverted since the manifest loaded).
+// Toolbar shown above a JSON diff: switch between the expanded (pretty-printed)
+// diff and the raw line diff. `data.pretty === true` means the server actually
+// produced an expanded diff; if we asked for one but didn't get it, a side
+// wasn't valid JSON and the server fell back to the raw diff.
+function jsonDiffToggle(data, wantPretty) {
+  var bar = el("div", "json-diff-bar");
+  var prettyShown = wantPretty && data.pretty === true;
+  var btn = el("button", "json-diff-toggle",
+    prettyShown ? "Expanded JSON diff · show raw" : "Raw diff · show expanded");
+  btn.title = prettyShown
+    ? "Show the unmodified git line diff"
+    : "Pretty-print both sides and diff those instead";
+  btn.addEventListener("click", function () {
+    // If we're showing the expanded diff, switch to raw; otherwise to expanded.
+    state.jsonDiffRaw = prettyShown;
+    loadAndRender();
+  });
+  bar.appendChild(btn);
+  if (wantPretty && data.pretty !== true) {
+    bar.appendChild(el("span", "json-diff-note",
+      "Couldn't expand as JSON (a side isn't valid JSON, or is too large/binary); " +
+      "showing the raw diff."));
+  }
+  return bar;
+}
+
+// An empty (or binary) diff for a listed file. Distinguish binary, a
+// formatting-only JSON change, a genuinely unchanged file, and a stale file
+// list (e.g. the change was just committed or reverted since the manifest
+// loaded).
 async function renderEmptyDiff(c, data) {
   if (data.binary) {
     c.appendChild(el("div", "notice",
       "Binary file — no textual diff. (Switch to full mode if it is actually text.)"));
+    return;
+  }
+  // Expanded JSON diff came back empty even though the file changed textually:
+  // the JSON is identical after pretty-printing (e.g. it was minified or
+  // reformatted). Explain it and point at the raw diff (the toggle is shown).
+  if (data.formattingOnly) {
+    c.appendChild(el("div", "notice",
+      "No semantic changes — this JSON is identical after pretty-printing; only " +
+      "formatting/whitespace differs (e.g. it was minified or reformatted). " +
+      "Switch to the raw diff to see the formatting change."));
     return;
   }
   var path = state.current.path;

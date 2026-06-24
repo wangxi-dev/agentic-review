@@ -279,6 +279,12 @@ tr.thread-row > td { padding: 0 !important; background: #fffdf2; }
 iframe.sandbox { width: 100%; height: 70vh; border: 0; background: #fff; }
 .preview-note { padding: 0.4rem 1rem; color: var(--muted); font-size: 0.8rem; border-bottom: 1px solid var(--border); }
 
+/* JSON diff toggle (expanded vs raw) */
+.json-diff-bar { display: flex; align-items: center; gap: 0.6rem; padding: 0.4rem 1rem; border-bottom: 1px solid var(--border); font-size: 0.8rem; }
+.json-diff-toggle { font: inherit; font-size: 0.8rem; padding: 0.2rem 0.6rem; border: 1px solid var(--border); border-radius: 6px; background: var(--panel, #fff); cursor: pointer; }
+.json-diff-toggle:hover { border-color: var(--accent); }
+.json-diff-note { color: var(--muted); }
+
 /* comments panel */
 #comment-form { padding: 0.7rem 0.8rem; border-bottom: 1px solid var(--border); }
 #anchor-label { font-size: 0.8rem; margin-bottom: 0.35rem; }

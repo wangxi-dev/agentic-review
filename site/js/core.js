@@ -81,7 +81,8 @@ export var state = {
   tree: null,           // cached /api/tree result
   checkers: [],         // available checker plugins
   checkSelection: null, // {id: bool} which checkers to run
-  checkResults: {}      // path -> [{id, name, findings, error?}]
+  checkResults: {},     // path -> [{id, name, findings, error?}]
+  jsonDiffRaw: false     // JSON diff: show the raw line diff instead of expanded
 };
 
 // ---- connection status / notices -------------------------------------

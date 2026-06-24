@@ -54,6 +54,16 @@ def make_repo():
         fh.write("# Title\n")
     with open(os.path.join(root, "img.bin"), "wb") as fh:
         fh.write(b"\x89PNG\x00\x01\x02\x03original\xff")
+    # Minified single-line JSON, modified in the working tree (the case the
+    # expanded JSON diff exists for) plus a JSON file that is *not* valid JSON.
+    with open(os.path.join(root, "data.json"), "w") as fh:
+        fh.write('{"name":"old","nums":[1,2,3],"keep":true}')
+    with open(os.path.join(root, "broken.json"), "w") as fh:
+        fh.write('{"valid":1}')
+    # Pretty-printed JSON that gets MINIFIED (same values) in the working tree:
+    # a "formatting only" change (raw diff non-empty, expanded diff empty).
+    with open(os.path.join(root, "reformat.json"), "w") as fh:
+        fh.write('{\n  "x": 1,\n  "y": [1, 2, 3]\n}\n')
     git(root, "add", "-A")
     git(root, "commit", "-qm", "init")
     # working-tree changes vs HEAD
@@ -64,6 +74,12 @@ def make_repo():
         fh.write("console.log('hi');\n")
     with open(os.path.join(root, "img.bin"), "wb") as fh:
         fh.write(b"\x89PNG\x00\x09\x08\x07changed\xfe")
+    with open(os.path.join(root, "data.json"), "w") as fh:
+        fh.write('{"name":"new","nums":[1,2,9],"keep":true,"added":42}')
+    with open(os.path.join(root, "broken.json"), "w") as fh:
+        fh.write('{not valid json,,}')
+    with open(os.path.join(root, "reformat.json"), "w") as fh:
+        fh.write('{"x":1,"y":[1,2,3]}')  # same values, just minified
     return root
 
 
@@ -129,6 +145,19 @@ class ClassificationTests(unittest.TestCase):
         self.assertTrue(server.looks_binary(b"abc\x00def"))
         self.assertTrue(server.looks_binary(b"\xff\xfe\x00bad"))
         self.assertFalse(server.looks_binary("héllo".encode("utf-8")))
+
+    def test_pretty_json_text(self):
+        # Pretty-printing expands and preserves the document's key order.
+        out = server._pretty_json_text('{"b":1,"a":2}')
+        self.assertEqual(out, '{\n  "b": 1,\n  "a": 2\n}\n')
+        # An empty / whitespace-only side is treated as an empty document.
+        self.assertEqual(server._pretty_json_text(""), "")
+        self.assertEqual(server._pretty_json_text("   \n"), "")
+        self.assertIsNone(server._pretty_json_text(None))
+        # Invalid JSON signals a fallback (None).
+        self.assertIsNone(server._pretty_json_text("{nope}"))
+        # Non-ASCII is kept literal (ensure_ascii=False).
+        self.assertEqual(server._pretty_json_text('"é"'), '"é"\n')
 
 
 # ---------------------------------------------------------------------------
@@ -367,6 +396,56 @@ class EndToEndHttpTests(unittest.TestCase):
     def test_diff_binary_flagged(self):
         st, data = self.get("/api/diff?path=img.bin")
         self.assertTrue(data.get("binary"))
+
+    def test_diff_json_raw_is_single_line(self):
+        # Without pretty, a minified JSON change is one removed + one added line.
+        st, data = self.get("/api/diff?path=data.json")
+        self.assertNotIn("pretty", data)
+        self.assertIn('-{"name":"old"', data["unified"])
+        self.assertIn('+{"name":"new"', data["unified"])
+
+    def test_diff_json_pretty_is_line_oriented(self):
+        # With pretty=1, both sides are expanded so the diff is line-oriented:
+        # only the actually-changed fields show as -/+ lines, not the whole blob.
+        st, data = self.get("/api/diff?path=data.json&pretty=1")
+        self.assertTrue(data.get("pretty"))
+        self.assertFalse(data.get("binary"))
+        u = data["unified"]
+        self.assertIn("diff --git a/data.json b/data.json", u)
+        self.assertIn('-  "name": "old"', u)
+        self.assertIn('+  "name": "new"', u)
+        # Only the changed array element churns; the rest stays as context.
+        self.assertIn("-    3\n", u)
+        self.assertIn("+    9\n", u)
+        self.assertIn("     1,\n", u)   # unchanged array element -> context line
+        # The new key appears as an addition.
+        self.assertIn('+  "added": 42', u)
+        # A real value change is not "formatting only".
+        self.assertFalse(data.get("formattingOnly"))
+
+    def test_diff_json_pretty_formatting_only(self):
+        # reformat.json is the same data, just minified in the working tree: the
+        # raw diff is non-empty but the expanded diff is empty -> formattingOnly.
+        st, pretty = self.get("/api/diff?path=reformat.json&pretty=1")
+        self.assertTrue(pretty.get("pretty"))
+        self.assertEqual(pretty["unified"], "")
+        self.assertTrue(pretty.get("formattingOnly"))
+        # The underlying raw diff is genuinely non-empty (whitespace changed).
+        st, raw = self.get("/api/diff?path=reformat.json")
+        self.assertTrue(raw["unified"].strip())
+
+    def test_diff_json_pretty_falls_back_when_invalid(self):
+        # broken.json is valid JSON in the base but not in the working tree, so
+        # the server can't expand it and falls back to the raw diff (no pretty).
+        st, data = self.get("/api/diff?path=broken.json&pretty=1")
+        self.assertNotEqual(data.get("pretty"), True)
+        self.assertTrue(data["unified"].strip())
+
+    def test_diff_pretty_ignored_for_non_json(self):
+        # pretty=1 on a non-JSON file is a no-op (raw diff, no pretty flag).
+        st, data = self.get("/api/diff?path=a.txt&pretty=1")
+        self.assertNotIn("pretty", data)
+        self.assertIn("+line2 CHANGED", data["unified"])
 
     def test_traversal_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as e:

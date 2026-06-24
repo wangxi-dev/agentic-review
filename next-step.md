@@ -17,16 +17,21 @@ of them from reviewer feedback. Pick up any item independently.
 
 ## Backlog (from reviewer feedback)
 
-### 1. JSON: expanded / pretty diff
-Huge single-line JSON files are unreadable in a raw `git diff`. Pretty-print both
-sides (stable key order) before diffing so the unified diff is line-oriented.
-- Sketch: add `GET /api/diff?path=…&pretty=1`. For JSON files, load old (from the
-  diff base via `git show <base>:<path>`) and new content, `json.loads` +
-  `json.dumps(…, indent=2, sort_keys=False)` each side, then
-  `git diff --no-index` the two normalized temp files (or difflib.unified_diff).
-- Shell: when renderer is `json`, default the diff mode to the pretty variant and
-  offer a "raw diff" toggle. Guard: fall back to the raw diff if either side is
-  invalid JSON or too large.
+### 1. JSON: expanded / pretty diff — ✅ done
+Implemented: `GET /api/diff?path=…&pretty=1`. For JSON-renderer files the server
+loads the old side (from the diff base via `git show <base>:<path>`, empty for
+added files) and the new side (working tree, empty for deleted), pretty-prints
+both with `json.dumps(indent=2)` (stable key order), and emits a line-oriented
+`difflib` unified diff with a `diff --git` header so diff2html renders it. Guards
+fall back to the raw git diff (response omits `pretty:true`) when either side is
+invalid JSON, binary, or larger than `MAX_CONTENT_BYTES`. A purely reformatting
+change (same data, different whitespace, e.g. minified) yields an empty expanded
+diff and is flagged `formattingOnly` so the shell explains it instead of
+misreporting "unchanged". The shell defaults the JSON diff to the expanded view
+and shows an "Expanded JSON diff · show raw" toggle (`site/js/viewer.js`
+`renderDiff`/`jsonDiffToggle`); a note appears when the server fell back or when
+only formatting differs. See `_json_pretty_diff` / `_pretty_json_text` in
+`local-server/ar_content.py` and the tests in `local-server/test_server.py`.
 
 ### 2. Markdown: render Mermaid diagrams — ✅ done
 Implemented: ` ```mermaid ` fences render as diagrams in the markdown preview
@@ -101,12 +106,16 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
   flip the default origin policy to strict (allowlist localhost + same-origin),
   with dev-echo behind an explicit `--allow-origin '*'` / `AR_DEV_ECHO=1` opt-in.
   Update `launch.py` to stop minting a token unless a pages origin is configured.
-- `local-server/server.py` (~1.2k lines) and `site/app.js` (~1.2k lines) now
-  exceed the project's own 800-LoC checker. **`app.js` is split (✅)** into ES
-  modules under `site/js/` (`core`, `manifest`, `viewer`, `comments`, `checks`,
-  `mermaid`) with `site/app.js` as the slim entry/orchestrator; each file is
-  under the 800-LoC limit. **Still to do:** split `server.py` into modules
-  (manifest/tree, content/diff, comments+stores, checkers, http).
+- `local-server/server.py` and `site/app.js` had both grown past the project's
+  own 800-LoC checker. **Both are now split (✅).** `app.js` is the slim entry
+  over ES modules under `site/js/` (`core`, `manifest`, `viewer`, `comments`,
+  `checks`, `mermaid`). `server.py` is now the slim entry/orchestrator over
+  sibling modules `ar_core` (constants/Config/git), `ar_manifest`
+  (manifest/tree/precommit), `ar_content` (content + diffs incl. expanded JSON),
+  `ar_checkers`, `ar_comments` (stores + validation), and `ar_http` (the
+  handler); `server.py` re-exports their public names so `import server` is
+  unchanged. Each file is under the 800-LoC limit (largest is `ar_comments` at
+  270).
 
 ## Smaller follow-ups
 
@@ -129,7 +138,15 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
   list/save/update/delete.
 - Markdown preview renders Mermaid diagrams (strict mode, SVG re-sanitized;
   `site/js/mermaid.js`).
+- JSON diffs default to an expanded (pretty-printed) line-oriented diff
+  (`/api/diff?…&pretty=1`) with a raw-diff toggle and graceful fallback; a
+  purely reformatting change (same data, different whitespace) is reported as
+  "formatting only" instead of a misleading "unchanged".
 - Shell split into ES modules under `site/js/` (core / manifest / viewer /
   comments / checks / mermaid); `site/app.js` is the slim entry. Each file is
   under the project's 800-LoC checker.
-- Tests: 59 unittest cases green.
+- Bridge split into modules under `local-server/` (`ar_core` / `ar_manifest` /
+  `ar_content` / `ar_checkers` / `ar_comments` / `ar_http`); `server.py` is the
+  slim entry/orchestrator that re-exports their public API. Each file is under
+  the 800-LoC checker.
+- Tests: 64 unittest cases green.

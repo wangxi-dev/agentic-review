@@ -1,0 +1,1 @@
+{"service":"agentic-review","port":8900,"loopbackOnly":true,"renderers":["code","markdown","html","json"],"limits":{"maxContentBytes":5242880,"checkerTimeoutSeconds":15},"flags":{"tokenRequired":true,"prettyJsonDiff":true},"tags":["local","review","diff"]}
