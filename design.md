@@ -41,10 +41,16 @@ backend.
 
 - **Source code** — syntax-highlighted by file type. Two modes: *diff* (highlights
   the changes, e.g. from `git diff`) and *full* (shows the new file only).
-- **Markdown** — automatically formatted, rendering charts/tables, in both
-  GitHub- and ADO-flavored variants.
-- **HTML / JS / CSS** *(next step)* — rendered inside a sandboxed `iframe` so the
-  reviewed code never runs in the shell's own origin.
+- **Markdown** — automatically formatted, rendering tables/blockquotes/code, and
+  sanitized before display.
+- **JSON** — a collapsible tree viewer (*tree* mode) for navigation, plus the
+  usual *full* and *diff* modes.
+- **HTML / JS / CSS** — rendered inside a sandboxed `iframe` so the reviewed code
+  never runs in the shell's own origin.
+
+Comments can be anchored to a line (or range) in *full* and *diff* modes, or to a
+rendered block in markdown *preview* mode, and are shown **inline** next to the
+anchored line/block in every mode.
 
 ## Local server responsibilities
 
@@ -75,13 +81,15 @@ and lets the user leave comments. Comments are stored as files by default.
 
 ## Comments
 
-Comments are stored as files by default. Each comment should carry enough
-anchoring to be actionable: file path, line/range (and which side, in diff mode),
-the comment text, and a timestamp/id.
+Comments are stored as files by default. Each comment carries enough anchoring to
+be actionable: file path, line/range (and which side, in diff mode), the comment
+text, and a timestamp/id. Comments can be **edited and deleted** from the shell
+(`PUT`/`DELETE /api/comments?id=…`), and the inline thread, side panel, and the
+agent's `take-feedback` view all reflect the current state.
 
-The store must be **pluggable behind a generic interface** so users can swap files
-for another channel (e.g. GitHub issues, or any other storage) — as long as the
-user's agent can still read the comments back.
+The store must be **pluggable behind a generic interface** (list / save / update /
+delete) so users can swap files for another channel (e.g. GitHub issues, or any
+other storage) — as long as the user's agent can still read the comments back.
 
 ## Does this plan work?
 

@@ -1,0 +1,15 @@
+{
+  "name": "agentic-review",
+  "version": "0.2.0",
+  "nested": {
+    "array": [1, 2, 3],
+    "object": { "a": true, "b": null, "c": "string" },
+    "deep": {
+      "level2": {
+        "level3": ["x", "y", "z"]
+      }
+    }
+  },
+  "renderers": ["code", "markdown", "html", "json"],
+  "flags": { "loopbackOnly": true, "tokenRequired": true }
+}

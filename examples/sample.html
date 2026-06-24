@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Sample HTML</title>
+  <style>
+    body { font-family: system-ui, sans-serif; margin: 2rem; }
+    .card { border: 1px solid #ccc; border-radius: 8px; padding: 1rem; max-width: 24rem; }
+    button { padding: 0.4rem 0.8rem; }
+  </style>
+</head>
+<body>
+  <h1>Sample HTML page</h1>
+  <div class="card">
+    <p>This renders inside a sandboxed <code>&lt;iframe&gt;</code>. The script
+       below is intentionally blocked by the sandbox.</p>
+    <button onclick="document.body.style.background='red'">Try to run script</button>
+  </div>
+  <script>
+    // This must NOT execute in the review shell — the sandbox blocks it.
+    document.body.style.background = "red";
+  </script>
+</body>
+</html>
