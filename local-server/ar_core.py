@@ -174,9 +174,14 @@ class Config:
 # ---------------------------------------------------------------------------
 
 def git(cfg: Config, *args, check=True):
+    # Decode as UTF-8 explicitly: git emits paths/content as UTF-8, but
+    # text=True would fall back to the locale codec (cp1252 on Windows), which
+    # crashes the subprocess reader thread on non-ASCII filenames and leaves
+    # proc.stdout as None. errors="replace" keeps us from ever crashing on
+    # genuinely undecodable bytes.
     proc = subprocess.run(
         ["git", "-C", cfg.root, *args],
-        capture_output=True, text=True,
+        capture_output=True, text=True, encoding="utf-8", errors="replace",
     )
     if check and proc.returncode != 0:
         raise HttpError(500, "git %s failed: %s" % (" ".join(args), proc.stderr.strip()))
