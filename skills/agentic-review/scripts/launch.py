@@ -112,13 +112,16 @@ def main(argv=None):
     print("  server    : http://127.0.0.1:%d  (pid %d)" % (port, proc.pid))
     print()
     print("Open the review shell (same-origin, works out of the box):")
-    print("  http://127.0.0.1:%d/?token=%s" % (port, token))
-    # The hosted GitHub Pages shell is always allowed by the bridge, so print a
-    # ready-to-click link to it too (override with AR_PAGES_URL).
-    pages_shell = os.environ.get("AR_PAGES_URL", DEFAULT_PAGES_SHELL).rstrip("/")
-    print()
-    print("Or the hosted shell (GitHub Pages):")
-    print("  %s/?api=http://localhost:%d&token=%s" % (pages_shell, port, token))
+    print("  http://127.0.0.1:%d/review.html" % port)
+    print("  (the bridge injects the session token; no ?api= or ?token= needed)")
+    # Only advertise the hosted GitHub Pages shell when the user opted in by
+    # setting AR_PAGES_ORIGIN / AR_PAGES_URL. That path is cross-origin, so it
+    # needs the explicit ?api=&token= query the bridge cannot inject for it.
+    if pages_origin or os.environ.get("AR_PAGES_URL"):
+        pages_shell = os.environ.get("AR_PAGES_URL", DEFAULT_PAGES_SHELL).rstrip("/")
+        print()
+        print("Or the hosted shell (GitHub Pages):")
+        print("  %s/review.html?api=http://localhost:%d&token=%s" % (pages_shell, port, token))
 
 
 if __name__ == "__main__":

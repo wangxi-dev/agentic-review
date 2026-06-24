@@ -7,7 +7,9 @@ of them from reviewer feedback. Pick up any item independently.
 ## How to resume
 
 - Repo root: `~/agentic-review`. Run the bridge with
-  `python3 local-server/server.py --root <repo> --port 8900` and open
+  `python3 local-server/server.py --root <repo> --port 8900`. The review shell is
+  at `http://127.0.0.1:8900/review.html` (the bridge injects the session token, so
+  the port is all you need); the overview + setup guide are at
   `http://127.0.0.1:8900/`.
 - Tests: `python3 local-server/test_server.py` (stdlib unittest).
 - Browser smoke tests live outside the repo (Playwright in Docker); re-create as
@@ -53,27 +55,55 @@ every changed file; the shell's checks ▾ menu has "Run on all changed files" w
 a consolidated, click-through report. Built-ins `loc` and `complexity` stay
 per-file.
 **Still to do:**
-- **Repo-scoped checkers** (e.g. `build pass`, `test pass`). Extend the checker
-  contract with a `scope` in `--describe`: `"file"` (current; content on stdin) vs
-  `"repo"` (run once for the whole repo, no stdin; receives the repo root and the
-  list of changed paths as args/JSON). The server runs repo-scoped checkers once
-  in check-all and shows a single pass/fail row. Ship example `build`/`test`
-  checkers under `examples/checkers/` that shell out to the project's build/test.
-- **Findings → comments.** Add a "file as comment" action on a finding (and a bulk
-  "file all") that POSTs `/api/comments` anchored to the path/line, so a violation
-  becomes a tracked review comment the agent reads back via `take-feedback`. Guard
-  against duplicates (dedupe by rule+path+line).
-- **Whitelist / manual approval.** Persist approved or whitelisted violations in
-  `<repo>/.agentic-review/checks-whitelist.json` (keyed by a stable fingerprint:
-  checker id + rule + path + a content hash of the offending line, so it survives
-  line moves). The server filters whitelisted findings out of check-all (or marks
-  them "approved"); the shell offers "approve / whitelist" on a finding and a view
-  of the whitelist. Decide whitelist granularity (per-line vs per-rule-per-file)
-  and whether the whitelist is committed (shared) or git-ignored (local) — likely
-  committed so the gate is shared, which means it should live OUTSIDE the
-  git-ignored work folder (e.g. `.agentic-review-allow.json` at repo root).
 
-## Tech debt
+**Decided in the latest review (still to build):** findings → comments via an
+explicit **button** (not auto-posted); the approve/whitelist gate uses **both** a
+UI action and a persisted whitelist file; repo-scoped **build/test command checks
+are deferred** — do LoC/complexity across changed files first.
+
+- **Repo-scoped checkers** (e.g. `build pass`, `test pass`) — *deferred for now.*
+  Extend the checker contract with a `scope` in `--describe`: `"file"` (current;
+  content on stdin) vs `"repo"` (run once for the whole repo, no stdin; receives
+  the repo root and the list of changed paths as args/JSON). The server runs
+  repo-scoped checkers once in check-all and shows a single pass/fail row. Ship
+  example `build`/`test` checkers under `examples/checkers/` that shell out to the
+  project's build/test.
+- **Findings → comments** *(button, decided).* Add a "file as comment" action on a
+  finding (and a bulk "file all") that POSTs `/api/comments` anchored to the
+  path/line, so a violation becomes a tracked review comment the agent reads back
+  via `take-feedback`. The human clicks to file — findings are not auto-posted.
+  Guard against duplicates (dedupe by rule+path+line).
+- **Whitelist / manual approval** *(both UI + file, decided).* Offer "approve /
+  whitelist" on a finding in the shell, persisting to a whitelist file keyed by a
+  stable fingerprint (checker id + rule + path + a content hash of the offending
+  line, so it survives line moves). The server filters whitelisted findings out of
+  check-all (or marks them "approved"); add a view of the whitelist. Decide
+  granularity (per-line vs per-rule-per-file) and whether the whitelist is committed
+  (shared) or git-ignored (local) — likely committed so the gate is shared, which
+  means it should live OUTSIDE the git-ignored work folder (e.g.
+  `.agentic-review-allow.json` at repo root).
+
+### 5. Optional token-free local mode (tighten CORS instead)
+Today the security model is: `launch.py` always sets a per-session **token** but
+sets **no** `--allow-origin`, so the bridge runs in **dev-echo CORS** (`server.py`
+`_cors_origin` echoes any Origin when `strict_origin` is false). That means any
+website open in the browser could hit `http://localhost:<port>/api/...`; the token
+(checked in `_check_token`, sent by the shell as the `X-AR-Token` header, or
+injected as `<meta name="ar-token">` for the same-origin shell) is what makes that
+safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
+- Idea: offer a mode where the token is optional and security comes from a **strict
+  CORS allowlist** instead — restrict to `http://localhost:<port>` +
+  `http://127.0.0.1:<port>` (and the same-origin no-Origin case) and **drop
+  dev-echo by default**. Cross-origin reads are then blocked by the browser, and
+  state-changing calls (JSON body) are blocked by preflight, so a loopback-only
+  same-origin session needs no token at all — truly "just the port".
+- Trade-off: the always-allowed GitHub Pages origin (and any `AR_PAGES_ORIGIN`)
+  still needs the token, because that path is intentionally cross-origin. So keep
+  the token for the hosted shell; make it optional only for the same-origin path.
+- Sketch: add `--no-token` (or default the same-origin flow to token-less) and
+  flip the default origin policy to strict (allowlist localhost + same-origin),
+  with dev-echo behind an explicit `--allow-origin '*'` / `AR_DEV_ECHO=1` opt-in.
+  Update `launch.py` to stop minting a token unless a pages origin is configured.
 - `local-server/server.py` (~1.2k lines) and `site/app.js` (~1.2k lines) now
   exceed the project's own 800-LoC checker. Split them: server into modules
   (manifest/tree, content/diff, comments+stores, checkers, http), app.js into
@@ -98,4 +128,4 @@ per-file.
 - Skill: `launch` / `take-feedback` / `cleanup` (cross-platform Python).
 - Comment stores: files (default) + GitHub issue (reference), both with
   list/save/update/delete.
-- Tests: 39 unittest cases green.
+- Tests: 59 unittest cases green.

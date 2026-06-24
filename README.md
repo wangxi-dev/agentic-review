@@ -37,7 +37,7 @@ Windows, macOS, and Linux. Use your platform's Python 3 (`python3`, `python`, or
 ```bash
 # from the repo you want to review:
 python3 path/to/agentic-review/skills/agentic-review/scripts/launch.py
-# open the printed URL, e.g. http://127.0.0.1:8900/?token=...
+# open the printed URL, e.g. http://127.0.0.1:8900/review.html  (token auto-injected)
 # review and comment, then:
 python3 .../scripts/take-feedback.py        # read comments back
 python3 .../scripts/cleanup.py --force      # tear down
@@ -47,7 +47,8 @@ Or run the bridge directly:
 
 ```bash
 python3 local-server/server.py --root /path/to/repo --port 8900
-# same-origin shell: http://127.0.0.1:8900/
+# same-origin review shell: http://127.0.0.1:8900/review.html
+# overview + setup guide:   http://127.0.0.1:8900/
 ```
 
 Requirements: Python 3.8+ and `git` on `PATH`. No third-party packages for the
@@ -83,7 +84,7 @@ as "added":
 # from the repo root
 python3 local-server/server.py --root "$PWD" \
   --diff-base "$(git hash-object -t tree /dev/null)" --port 8900
-# open http://127.0.0.1:8900/  and browse examples/:
+# open http://127.0.0.1:8900/review.html  and browse examples/:
 #   code files  -> full / diff (syntax highlighting, click a line to comment)
 #   sample.md   -> preview (click a block to comment), full, diff
 #   sample.html -> preview (sandboxed iframe; scripts blocked), full, diff
@@ -130,6 +131,10 @@ Built-in checkers:
 
 ### Writing your own checker
 
+> Full contract, a copy-paste minimal example, and the built-in thresholds live in
+> **[local-server/checkers/README.md](./local-server/checkers/README.md)**. The
+> short version:
+
 Drop an executable CLI into `<repo>/.agentic-review/checkers/` (a `.py`, `.js`,
 `.sh`, or executable file). The bridge runs only checkers from this folder and the
 built-in one — never from the repo's tracked content. A checker must support:
@@ -163,7 +168,8 @@ Findings format (stdout):
 local-server/server.py        # loopback bridge (manifest/tree/content/diff/comments/checks)
 local-server/checkers/        # built-in checker CLIs (loc.py, complexity.py)
 local-server/test_server.py   # unit + end-to-end tests
-site/                         # static review shell (index.html, app.js, styles.css)
+site/                         # static site: index.html (overview), guideline.html (setup),
+                              #   review.html (review shell), app.js, styles.css
 skills/agentic-review/        # SKILL.md + scripts/ (launch, precommit, take-feedback, cleanup)
 examples/                     # sample files, one per renderer
 ```
@@ -172,13 +178,16 @@ examples/                     # sample files, one per renderer
 
 The shell is fully static. Two ways to serve it:
 
-1. **Same-origin (default, zero-config).** The bridge serves `site/` itself at
-   `http://127.0.0.1:<port>/`, so there is no cross-origin call at all.
-2. **GitHub Pages.** The shell is published at
+1. **Same-origin (default, zero-config).** The bridge serves `site/` itself, so the
+   review shell is at `http://127.0.0.1:<port>/review.html` (and the overview +
+   setup guide at `http://127.0.0.1:<port>/`). There is no cross-origin call at all,
+   and the bridge **injects the session token** into the shell page, so just the
+   port is needed — no `?token=` to copy.
+2. **GitHub Pages.** The site is published at
    **https://wangxi-dev.github.io/agentic-review/** (via
-   `.github/workflows/static.yml`, source = "GitHub Actions"). The bridge
-   **always allows** this origin, so just open
-   `https://wangxi-dev.github.io/agentic-review/?api=http://localhost:<port>&token=…`
+   `.github/workflows/static.yml`, source = "GitHub Actions") with the review shell
+   at **/review.html**. The bridge **always allows** this origin, so just open
+   `https://wangxi-dev.github.io/agentic-review/review.html?api=http://localhost:<port>&token=…`
    — `agentic-review:launch` prints this link for you. The bridge sends
    `Access-Control-Allow-Private-Network: true` on preflights for Chrome's
    Private Network Access.

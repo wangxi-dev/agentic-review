@@ -20,7 +20,14 @@
     return "http://localhost:8900";
   }
   var BASE = resolveBase();
-  var TOKEN = qs("token") || "";
+  // Token sources, in order: explicit ?token= (used by the cross-origin hosted
+  // shell), else a <meta name="ar-token"> the bridge injects into the same-origin
+  // page (so opening http://127.0.0.1:<port>/review.html "just works", no query).
+  function metaToken() {
+    var m = document.querySelector('meta[name="ar-token"]');
+    return (m && m.getAttribute("content")) || "";
+  }
+  var TOKEN = qs("token") || metaToken();
 
   // ---- tiny DOM helpers -------------------------------------------------
   var $ = function (id) { return document.getElementById(id); };

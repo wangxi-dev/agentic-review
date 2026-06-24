@@ -3,84 +3,110 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>agentic-review</title>
-
-  <!-- Syntax highlighting (highlight.js + line numbers plugin) -->
-  <link id="hljs-theme" rel="stylesheet"
-        href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" />
-  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/highlightjs-line-numbers.js@2.8.0/dist/highlightjs-line-numbers.min.js"></script>
-
-  <!-- Markdown -->
-  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
-  <!-- Sanitizer (markdown + html output) -->
-  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
-
-  <!-- Diff rendering -->
-  <link rel="stylesheet"
-        href="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css" />
-  <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html.min.js"></script>
-
+  <title>agentic-review — a local review layer for AI-generated code</title>
   <link rel="stylesheet" href="styles.css" />
 </head>
-<body>
-  <header id="topbar">
+<body class="doc">
+  <nav class="doc-nav">
     <strong>agentic-review</strong>
-    <span id="conn" class="pill">connecting…</span>
-    <span id="repo" class="muted"></span>
+    <a href="index.html" class="active">Home</a>
+    <a href="guideline.html">Setup guide</a>
+    <a href="review.html">Review shell</a>
     <span class="spacer"></span>
-    <button id="reload" title="Reload manifest">↻ refresh</button>
-  </header>
+    <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
 
-  <div id="layout">
-    <aside id="filelist" aria-label="Files">
-      <div class="panel-title">
-        <span class="seg" role="tablist">
-          <button id="tab-changed" class="seg-btn active" role="tab">Changed</button>
-          <button id="tab-all" class="seg-btn" role="tab">All files</button>
-        </span>
-      </div>
-      <ul id="files"></ul>
-      <div id="tree" hidden></div>
-    </aside>
+  <main class="doc-wrap">
+    <h1>agentic-review</h1>
+    <p class="lede">
+      A local, human-in-the-loop review layer for AI-generated code.
+    </p>
 
-    <main id="viewer">
-      <div id="viewer-head">
-        <span id="cur-path" class="muted">Select a file</span>
-        <span class="spacer"></span>
-        <div id="checks">
-          <button id="run-checks" title="Run code checks on this file">▷ Run checks</button>
-          <button id="checks-toggle" class="caret" title="Choose checks">▾</button>
-          <div id="checks-menu" hidden></div>
-        </div>
-        <div id="modes" class="modes" role="tablist"></div>
-      </div>
-      <div id="content"><div class="empty">No file selected.</div></div>
-    </main>
+    <p>
+      AI agents produce more code than a human can comfortably review.
+      <strong>agentic-review</strong> gives you a fast <strong>local</strong> loop
+      to read, comment on, and feed changes back to the agent before it continues.
+      The review UI talks <em>only</em> to a loopback server on your own machine —
+      the one component with access to your files.
+    </p>
 
-    <aside id="comments" aria-label="Comments">
-      <div class="panel-title">
-        Comments <span id="comment-count" class="pill">0</span>
-      </div>
-      <div id="selection-hint" class="muted small">
-        Tip: click a line number (in <b>full</b> or <b>diff</b> mode) or a block
-        (in <b>preview</b> mode) to anchor a comment. Shift-click a second line
-        for a range.
-      </div>
-      <form id="comment-form">
-        <div id="anchor-label" class="anchor muted">File-level comment</div>
-        <textarea id="comment-text" rows="3"
-                  placeholder="Leave a comment for the agent…"></textarea>
-        <div class="row">
-          <button type="submit" id="comment-submit">Comment</button>
-          <button type="button" id="comment-clear" class="ghost">clear anchor</button>
-        </div>
-        <div id="comment-status" class="small"></div>
-      </form>
-      <ul id="comment-list"></ul>
-    </aside>
-  </div>
+    <div class="cta-row">
+      <a class="cta primary" href="review.html">Open the review shell →</a>
+      <a class="cta secondary" href="guideline.html">Read the setup guide</a>
+    </div>
+    <p class="small muted">
+      The review shell needs a running local bridge. If you launched with a token,
+      use the <code>?token=…</code> URL printed by <code>agentic-review:launch</code>.
+    </p>
 
-  <script src="app.js"></script>
+    <h2>How it works</h2>
+    <p>Three pillars work together:</p>
+    <div class="cards">
+      <div class="card">
+        <h3>Skill</h3>
+        <p>Teaches AI agents to launch a review, collect feedback, and clean up —
+           via four plain-Python commands (stdlib only, cross-platform).</p>
+      </div>
+      <div class="card">
+        <h3>Shell</h3>
+        <p>A static review UI (this site). Read diffs or browse every file, click a
+           line or block to anchor a comment, and run code checks.</p>
+      </div>
+      <div class="card">
+        <h3>Local bridge</h3>
+        <p>A loopback HTTP server on <code>127.0.0.1:8900</code> that exposes your
+           local files to the shell and stores your comments.</p>
+      </div>
+    </div>
+    <p>
+      The shell talks <strong>only</strong> to the local server, which is the only
+      component with access to your files. An HTTPS GitHub Pages shell can call your
+      <code>http://localhost</code> bridge via the browser loopback exception, or you
+      can run everything same-origin straight from the bridge.
+    </p>
+
+    <h2>What you can do</h2>
+    <ul>
+      <li><strong>Review the diff.</strong> By default the shell shows uncommitted
+        changes (working tree vs <code>HEAD</code>); point the diff base at any ref to
+        review committed history instead.</li>
+      <li><strong>Browse all files.</strong> A <em>Changed</em> tab for the diff set and
+        an <em>All files</em> tab that shows the whole repo as a collapsible tree
+        (gitignored paths excluded).</li>
+      <li><strong>Comment inline.</strong> Anchor a comment to a line, a range, or a
+        Markdown block. Comments render inline in full, diff, and preview modes, and
+        can be edited or deleted.</li>
+      <li><strong>Rich renderers.</strong> Syntax-highlighted code, Markdown preview,
+        sandboxed HTML preview, and a collapsible JSON tree.</li>
+      <li><strong>Run checks.</strong> Pluggable code checkers (lines-of-code and
+        complexity built in) flag findings inline by severity. Drop your own CLI into
+        <code>.agentic-review/checkers/</code>.</li>
+      <li><strong>Propose a commit message.</strong> Stage a proposed commit message as
+        a pseudo change so the human reviews it before you commit.</li>
+    </ul>
+
+    <h2>The skill commands</h2>
+    <p>Run with your platform's Python 3 (<code>python3</code>, <code>python</code>, or
+       <code>py -3</code>) — no third-party packages.</p>
+    <ul>
+      <li><code>agentic-review:launch [comments-folder]</code> — start the local server
+        and print the shell URL.</li>
+      <li><code>agentic-review:precommit</code> — stage a proposed commit message for review.</li>
+      <li><code>agentic-review:take-feedback</code> — feed the stored comments back to the agent.</li>
+      <li><code>agentic-review:cleanup</code> — shut down the server and remove temp comments.</li>
+    </ul>
+
+    <h2>Next steps</h2>
+    <div class="cta-row">
+      <a class="cta primary" href="guideline.html">Set it up →</a>
+      <a class="cta secondary" href="review.html">Jump to the review shell</a>
+    </div>
+
+    <p class="doc-footer">
+      Built for reviewing AI-generated changes locally and safely. See the
+      <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">repository</a>
+      for the bridge server, design notes, and tests.
+    </p>
+  </main>
 </body>
 </html>

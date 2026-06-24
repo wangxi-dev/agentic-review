@@ -35,6 +35,7 @@ import tempfile
 import threading
 import time
 import uuid
+import html as html_lib
 from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import urlparse, parse_qs
@@ -859,6 +860,21 @@ def make_comment(cfg: Config, body):
 # HTTP handler
 # ---------------------------------------------------------------------------
 
+def _inject_token(body, token):
+    """Inject a <meta name="ar-token"> into an HTML page so the same-origin shell
+    can authenticate without a ?token= query parameter."""
+    try:
+        text = body.decode("utf-8")
+    except UnicodeDecodeError:
+        return body
+    tag = '<meta name="ar-token" content="%s">' % html_lib.escape(token, quote=True)
+    if "</head>" in text:
+        text = text.replace("</head>", "  " + tag + "\n</head>", 1)
+    else:
+        text = tag + "\n" + text
+    return text.encode("utf-8")
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "agentic-review-local/%s" % VERSION
     protocol_version = "HTTP/1.1"
@@ -1053,6 +1069,12 @@ class Handler(BaseHTTPRequestHandler):
         ctype, _ = mimetypes.guess_type(full)
         with open(full, "rb") as fh:
             body = fh.read()
+        # Same-origin shell: inject the session token into the review page so it
+        # authenticates without a ?token= in the URL — opening
+        # http://127.0.0.1:<port>/review.html is enough. (The hosted cross-origin
+        # shell still uses ?token=; the bridge can't inject into a CDN page.)
+        if self.cfg.token and os.path.basename(norm) == "review.html":
+            body = _inject_token(body, self.cfg.token)
         self._send_bytes(200, body, ctype or "application/octet-stream")
 
     def log_message(self, fmt, *args):
@@ -1132,7 +1154,8 @@ def main(argv=None):
         print("  comments  : %s%s" % (cfg.comments_dir,
                                       " (temp)" if cfg.comments_dir_is_temp else ""))
     if cfg.site_dir and os.path.isdir(cfg.site_dir):
-        print("  shell     : http://127.0.0.1:%d/  (same-origin)" % cfg.port)
+        print("  shell     : http://127.0.0.1:%d/review.html  (same-origin)" % cfg.port)
+        print("  docs      : http://127.0.0.1:%d/  (overview + setup guide)" % cfg.port)
     if cfg.token:
         print("  token     : required on /api/* (X-AR-Token)")
     if not cfg.strict_origin:

@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agentic-review — setup guide</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body class="doc">
+  <nav class="doc-nav">
+    <strong>agentic-review</strong>
+    <a href="index.html">Home</a>
+    <a href="guideline.html" class="active">Setup guide</a>
+    <a href="review.html">Review shell</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+
+  <main class="doc-wrap">
+    <h1>Setup guide</h1>
+    <p class="lede">Get a local review loop running in under a minute.</p>
+
+    <h2>Requirements</h2>
+    <ul>
+      <li><strong>Python 3.8+</strong> on your <code>PATH</code> (<code>python3</code>,
+        <code>python</code>, or <code>py -3</code>).</li>
+      <li><strong>git</strong> on your <code>PATH</code>.</li>
+      <li>No third-party packages for the server or skill. The shell loads
+        highlight.js / marked / DOMPurify / diff2html from a CDN, so a browser with
+        internet access renders best.</li>
+    </ul>
+    <div class="note">
+      The skill commands are plain Python (stdlib only), so they run the same on
+      Windows, macOS, and Linux.
+    </div>
+
+    <h2>Quick start (via the skill)</h2>
+    <ol class="steps">
+      <li>
+        <strong>Launch the bridge</strong> from the repo you want to review:
+        <pre><code>python3 path/to/agentic-review/skills/agentic-review/scripts/launch.py</code></pre>
+        It starts the loopback server and prints a ready-to-open URL.
+      </li>
+      <li>
+        <strong>Open the review shell.</strong> Use the printed link, e.g.
+        <pre><code>http://127.0.0.1:8900/review.html?token=…</code></pre>
+        Review the diff (or browse all files) and click a line or block to leave comments.
+      </li>
+      <li>
+        <strong>Feed comments back</strong> to the agent:
+        <pre><code>python3 .../scripts/take-feedback.py</code></pre>
+      </li>
+      <li>
+        <strong>Tear down</strong> when you are done:
+        <pre><code>python3 .../scripts/cleanup.py --force</code></pre>
+      </li>
+    </ol>
+
+    <h2>Run the bridge directly</h2>
+    <p>You can skip the skill and start the server yourself:</p>
+    <pre><code>python3 local-server/server.py --root /path/to/repo --port 8900
+# same-origin shell:  http://127.0.0.1:8900/review.html
+# landing / docs:     http://127.0.0.1:8900/</code></pre>
+    <p>
+      The bridge binds to <code>127.0.0.1</code> only and confines file access to the
+      repo root (path traversal, absolute paths, and symlink escape are rejected).
+    </p>
+
+    <h2>What counts as "under review" (the diff base)</h2>
+    <p>
+      By default the review shows <strong>uncommitted changes</strong> (working tree vs
+      <code>HEAD</code>), so once a change is committed it drops out of the review — the
+      shell auto-refreshes and tells you when that happens. To review
+      <strong>committed</strong> history instead, set the diff base to an earlier ref:
+    </p>
+    <pre><code># review the last commit
+AR_DIFF_BASE=HEAD~1 python3 .../scripts/launch.py
+
+# diff against main
+python3 local-server/server.py --root . --diff-base main --port 8900</code></pre>
+    <p>
+      To make <em>every</em> tracked file show up (e.g. to try the renderers in
+      <code>examples/</code>), point the diff base at the empty tree:
+    </p>
+    <pre><code>python3 local-server/server.py --root "$PWD" \
+  --diff-base "$(git hash-object -t tree /dev/null)" --port 8900</code></pre>
+
+    <h2>Deploying the shell</h2>
+    <p>The shell is fully static. Two ways to serve it:</p>
+
+    <h3>1. Same-origin (default, zero-config)</h3>
+    <p>
+      The bridge serves <code>site/</code> itself, so the review shell is at
+      <code>http://127.0.0.1:&lt;port&gt;/review.html</code> and this docs site is at
+      <code>http://127.0.0.1:&lt;port&gt;/</code>. There is no cross-origin call at all.
+    </p>
+
+    <h3>2. GitHub Pages</h3>
+    <p>
+      The shell is published at
+      <a href="https://wangxi-dev.github.io/agentic-review/review.html" target="_blank" rel="noopener">wangxi-dev.github.io/agentic-review/review.html</a>
+      (via <code>.github/workflows/static.yml</code>, source = "GitHub Actions"). The
+      bridge <strong>always allows</strong> this origin, so just open:
+    </p>
+    <pre><code>https://wangxi-dev.github.io/agentic-review/review.html?api=http://localhost:&lt;port&gt;&amp;token=…</code></pre>
+    <p>
+      <code>agentic-review:launch</code> prints this link for you. The bridge sends
+      <code>Access-Control-Allow-Private-Network: true</code> on preflights for Chrome's
+      Private Network Access.
+    </p>
+    <p>
+      For any <em>other</em> static host, launch the bridge with
+      <code>AR_PAGES_ORIGIN=https://your.host</code> to add that origin to the CORS
+      allowlist (and <code>AR_PAGES_URL=https://your.host/path/</code> to make
+      <code>launch</code> print its link).
+    </p>
+    <div class="note warn">
+      <strong>Browser support:</strong> an HTTPS Pages shell calling
+      <code>http://localhost</code> works in current Chrome, Firefox, and Safari via the
+      loopback exception. If a browser blocks the localhost call, use the same-origin
+      option above.
+    </div>
+
+    <h2>Checks (pluggable code checkers)</h2>
+    <p>
+      The shell can run code <strong>checkers</strong> on the open file ("Run checks" in
+      the viewer header). Built-ins:
+    </p>
+    <ul>
+      <li><strong>Lines of code</strong> — flags files over 800 lines and lines over 250 characters.</li>
+      <li><strong>Code complexity</strong> — flags nesting deeper than 4 and functions with more than 4 parameters.</li>
+    </ul>
+    <p>Drop your own executable CLI into <code>&lt;repo&gt;/.agentic-review/checkers/</code>. A checker must support:</p>
+    <div class="note">
+      Full contract, a copy-paste example, and the built-in thresholds are in
+      <code>local-server/checkers/README.md</code> in the repo.
+    </div>
+    <pre><code>checker --describe        # prints {"id","name","description"} as JSON
+checker &lt;relative-path&gt;   # reads file CONTENT on stdin, prints findings JSON</code></pre>
+    <p>Findings format (stdout):</p>
+    <pre><code>{ "findings": [
+  { "line": 12, "severity": "warning", "rule": "max-line-length",
+    "message": "Line is 312 chars (&gt; 250)" },
+  { "severity": "error", "rule": "max-file-loc",
+    "message": "File has 950 lines (&gt; 800)" }
+] }</code></pre>
+    <div class="note warn">
+      <strong>Security:</strong> checkers are executables run on your machine on demand.
+      Only place checkers you trust in <code>.agentic-review/checkers/</code>. That folder
+      is git-ignored and not populated by cloning a repo, so a reviewed repo cannot inject
+      checkers.
+    </div>
+
+    <h2>Tests</h2>
+    <pre><code>python3 local-server/test_server.py   # stdlib unittest: unit + end-to-end</code></pre>
+
+    <h2>Typical round trip</h2>
+    <ol>
+      <li><code>launch</code> → open the URL, review the diff (or all files) and comment.</li>
+      <li><code>take-feedback</code> → read comments, make the requested changes.</li>
+      <li>(optional) <code>precommit</code> → stage the commit message and have the human review it.</li>
+      <li><code>cleanup --force</code> once satisfied; then commit.</li>
+    </ol>
+
+    <p class="doc-footer">
+      Need more detail? See the
+      <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">repository README and design notes</a>,
+      or head back to the <a href="index.html">overview</a>.
+    </p>
+  </main>
+</body>
+</html>

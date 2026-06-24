@@ -47,14 +47,17 @@ python3 skills/agentic-review/scripts/launch.py [review-comments-folder]
   including untracked files). Override with `AR_DIFF_BASE` (e.g. `main`).
 - Default starting port is `8900`; the script advances to the next free port if
   it is busy.
-- To use the hosted GitHub Pages shell instead of the same-origin one, set
-  `AR_PAGES_ORIGIN` (e.g. `https://you.github.io/agentic-review`); the script
-  then also prints a `?api=…&token=…` URL and adds that origin to the server's
-  CORS allowlist.
+- The same-origin shell needs **only the port** — open
+  `http://127.0.0.1:<port>/review.html`. The bridge injects the session token
+  into that page, so there is no `?api=` or `?token=` to copy by hand.
+- To use the hosted GitHub Pages shell instead, set `AR_PAGES_ORIGIN` (e.g.
+  `https://you.github.io/agentic-review`); the script then also prints a
+  cross-origin `?api=…&token=…` URL and adds that origin to the server's CORS
+  allowlist.
 
-After launching, **give the user the printed `http://127.0.0.1:<port>/?token=…`
-URL** and ask them to review and comment. Then wait for them to say they are
-done before taking feedback.
+After launching, **give the user the printed
+`http://127.0.0.1:<port>/review.html` URL** and ask them to review and comment.
+Then wait for them to say they are done before taking feedback.
 
 ## `agentic-review:precommit`
 

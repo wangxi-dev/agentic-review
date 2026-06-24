@@ -207,18 +207,24 @@ tr.commented td.hljs-ln-numbers::after { content: " 💬"; font-size: 0.7em; }
 .d2h-code-linenumber, .d2h-code-side-linenumber { cursor: pointer; }
 tr.d2h-sel td { background: var(--sel) !important; }
 /*
- * diff2html pins line numbers with position:absolute and reserves space with a
- * big left padding on the code line. In our scrolling viewer that detaches the
- * numbers from the content (they don't move when you scroll). Put the line-
- * number column back into normal table flow so it scrolls vertically with the
- * code, and make it sticky-left so it stays visible on horizontal scroll.
+ * diff2html lays out each row as an inline-block code cell with the line-number
+ * cell pulled out of normal flow (position:absolute) and reserves space with a
+ * big left padding on the code cell. Inside our scrolling viewer that detaches
+ * the gutter from the code — it doesn't follow vertical scroll and only snaps
+ * back when you reach the bottom. Reflow each row into a real two-column table
+ * so the line-number gutter scrolls together with the code.
  */
 .d2h-code-linenumber {
-  position: sticky; left: 0; z-index: 1;
+  position: static; display: table-cell;
+  vertical-align: top; background: var(--panel);
 }
-.d2h-code-side-linenumber { position: static; }
-.d2h-code-line { padding: 0 0.5em; width: auto; }
-.d2h-code-side-line { padding: 0 0.5em; width: auto; }
+.d2h-code-side-linenumber {
+  position: static; display: table-cell; vertical-align: top;
+}
+.d2h-code-line, .d2h-code-side-line {
+  display: table-cell; vertical-align: top;
+  width: auto; padding: 0 0.6em;
+}
 
 /* inline comment threads (shown in full / diff / preview) */
 tr.thread-row > td { padding: 0 !important; background: #fffdf2; }
@@ -295,3 +301,73 @@ button.c-act.c-del:hover { color: var(--deleted); border-color: var(--deleted); 
 .c-edit-row { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
 .c-edit-row button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
 .panel-c { width: 100%; }
+
+/* ---------------------------------------------------------------------------
+   Doc pages (index.html landing, guideline.html) — reuse the design tokens
+   above. These pages are plain documents, not the #layout review grid.
+   --------------------------------------------------------------------------- */
+body.doc { height: auto; }
+.doc-nav {
+  display: flex; align-items: center; gap: 0.9rem;
+  padding: 0.5rem 0.9rem; border-bottom: 1px solid var(--border);
+  background: var(--panel); position: sticky; top: 0; z-index: 5;
+}
+.doc-nav strong { font-size: 1rem; }
+.doc-nav a { color: var(--accent); text-decoration: none; }
+.doc-nav a:hover { text-decoration: underline; }
+.doc-nav a.active { font-weight: 600; }
+.doc-nav .spacer { flex: 1; }
+
+.doc-wrap { max-width: 880px; margin: 0 auto; padding: 1.5rem 1.2rem 4rem; }
+.doc-wrap h1 { font-size: 1.8rem; margin: 0.4rem 0 0.2rem; }
+.doc-wrap h2 {
+  font-size: 1.25rem; margin: 2rem 0 0.6rem;
+  padding-bottom: 0.3rem; border-bottom: 1px solid var(--border);
+}
+.doc-wrap h3 { font-size: 1.02rem; margin: 1.3rem 0 0.4rem; }
+.doc-wrap p, .doc-wrap li { line-height: 1.6; }
+.doc-wrap ul, .doc-wrap ol { padding-left: 1.3rem; }
+.doc-wrap a { color: var(--accent); }
+.lede { font-size: 1.1rem; color: var(--muted); margin-top: 0; }
+
+.doc-wrap code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.85em;
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 4px; padding: 0.05rem 0.3rem;
+}
+.doc-wrap pre {
+  background: var(--panel); border: 1px solid var(--border);
+  border-radius: 8px; padding: 0.8rem 1rem; overflow: auto; line-height: 1.45;
+}
+.doc-wrap pre code { background: none; border: none; padding: 0; font-size: 0.85rem; }
+
+.cta-row { display: flex; flex-wrap: wrap; gap: 0.6rem; margin: 1.2rem 0 0.4rem; }
+.cta {
+  display: inline-block; text-decoration: none; font-weight: 600;
+  padding: 0.5rem 1rem; border-radius: 8px; border: 1px solid var(--border);
+}
+.cta.primary { background: var(--accent); color: #fff; border-color: var(--accent); }
+.cta.primary:hover { filter: brightness(1.05); }
+.cta.secondary { background: #fff; color: var(--accent); }
+.cta.secondary:hover { background: var(--panel); }
+
+.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 0.9rem; margin: 1rem 0; }
+.card { border: 1px solid var(--border); border-radius: 10px; padding: 0.9rem 1rem; background: #fff; }
+.card h3 { margin-top: 0; }
+.card p { margin: 0.3rem 0 0; color: var(--muted); }
+
+.note {
+  border-left: 3px solid var(--accent); background: var(--panel);
+  padding: 0.6rem 0.9rem; border-radius: 0 6px 6px 0; margin: 1rem 0;
+}
+.note.warn { border-left-color: var(--modified); }
+.doc-footer { margin-top: 2.5rem; padding-top: 1rem; border-top: 1px solid var(--border); color: var(--muted); font-size: 0.85rem; }
+.steps { counter-reset: step; list-style: none; padding-left: 0; }
+.steps > li { position: relative; padding-left: 2.2rem; margin: 0.8rem 0; }
+.steps > li::before {
+  counter-increment: step; content: counter(step);
+  position: absolute; left: 0; top: 0.05rem;
+  width: 1.5rem; height: 1.5rem; border-radius: 50%;
+  background: var(--accent); color: #fff; font-size: 0.8rem; font-weight: 700;
+  display: flex; align-items: center; justify-content: center;
+}

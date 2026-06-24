@@ -561,5 +561,46 @@ class CheckerDiscoveryTests(unittest.TestCase):
         self.assertEqual(out["summary"]["filesWithFindings"], len(out["files"]))
 
 
+class StaticTokenInjectionTests(unittest.TestCase):
+    """The same-origin shell (review.html) gets the session token injected so it
+    authenticates without a ?token= query; other static pages do not."""
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = make_repo()
+        cls.site = tempfile.mkdtemp(prefix="ar-site-")
+        with open(os.path.join(cls.site, "review.html"), "w") as fh:
+            fh.write("<!DOCTYPE html><html><head><title>shell</title></head>"
+                     "<body></body></html>")
+        with open(os.path.join(cls.site, "index.html"), "w") as fh:
+            fh.write("<!DOCTYPE html><html><head><title>home</title></head>"
+                     "<body></body></html>")
+        cls.cfg = make_cfg(cls.root, token="secret", site_dir=cls.site)
+        server.Handler.cfg = cls.cfg
+        server.Handler.store = server.make_store(cls.cfg)
+        cls.httpd = ThreadingHTTPServer(("127.0.0.1", 0), server.Handler)
+        cls.port = cls.httpd.server_address[1]
+        cls.thread = threading.Thread(target=cls.httpd.serve_forever, daemon=True)
+        cls.thread.start()
+
+    @classmethod
+    def tearDownClass(cls):
+        cls.httpd.shutdown()
+        cls.httpd.server_close()
+
+    def _raw(self, path):
+        url = "http://127.0.0.1:%d%s" % (self.port, path)
+        with urllib.request.urlopen(url) as r:
+            return r.read().decode("utf-8")
+
+    def test_review_html_has_token_meta(self):
+        body = self._raw("/review.html")
+        self.assertIn('<meta name="ar-token" content="secret">', body)
+
+    def test_index_html_has_no_token_meta(self):
+        body = self._raw("/")
+        self.assertNotIn("ar-token", body)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)
