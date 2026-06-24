@@ -97,11 +97,18 @@ The shell is fully static. Two ways to serve it:
 
 1. **Same-origin (default, zero-config).** The bridge serves `site/` itself at
    `http://127.0.0.1:<port>/`, so there is no cross-origin call at all.
-2. **GitHub Pages (or any static host).** Publish `site/` and open it with
-   `?api=http://localhost:<port>&token=…`. Launch the bridge with
-   `AR_PAGES_ORIGIN=https://you.github.io/agentic-review` so it adds that origin
-   to the CORS allowlist. The bridge sends `Access-Control-Allow-Private-Network:
-   true` on preflights for Chrome's Private Network Access.
+2. **GitHub Pages.** The shell is published at
+   **https://wangxi-dev.github.io/agentic-review/** (via
+   `.github/workflows/static.yml`, source = "GitHub Actions"). The bridge
+   **always allows** this origin, so just open
+   `https://wangxi-dev.github.io/agentic-review/?api=http://localhost:<port>&token=…`
+   — `agentic-review:launch` prints this link for you. The bridge sends
+   `Access-Control-Allow-Private-Network: true` on preflights for Chrome's
+   Private Network Access.
+
+For any *other* static host, launch the bridge with
+`AR_PAGES_ORIGIN=https://your.host` to add that origin to the CORS allowlist (and
+`AR_PAGES_URL=https://your.host/path/` to make `launch` print its link).
 
 ## Browser support
 

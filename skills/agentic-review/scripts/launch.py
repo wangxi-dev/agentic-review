@@ -19,6 +19,10 @@ import time
 
 import common as C
 
+# The project's published GitHub Pages shell (the bridge always allows this
+# origin). Override with AR_PAGES_URL for a self-hosted shell.
+DEFAULT_PAGES_SHELL = "https://wangxi-dev.github.io/agentic-review/"
+
 
 def main(argv=None):
     parser = argparse.ArgumentParser(prog="agentic-review:launch")
@@ -105,11 +109,12 @@ def main(argv=None):
     print()
     print("Open the review shell (same-origin, works out of the box):")
     print("  http://127.0.0.1:%d/?token=%s" % (port, token))
-    if pages_origin:
-        print()
-        print("Or the hosted shell (GitHub Pages):")
-        print("  %s/?api=http://localhost:%d&token=%s"
-              % (pages_origin.rstrip("/"), port, token))
+    # The hosted GitHub Pages shell is always allowed by the bridge, so print a
+    # ready-to-click link to it too (override with AR_PAGES_URL).
+    pages_shell = os.environ.get("AR_PAGES_URL", DEFAULT_PAGES_SHELL).rstrip("/")
+    print()
+    print("Or the hosted shell (GitHub Pages):")
+    print("  %s/?api=http://localhost:%d&token=%s" % (pages_shell, port, token))
 
 
 if __name__ == "__main__":

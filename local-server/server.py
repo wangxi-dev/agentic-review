@@ -42,6 +42,12 @@ from urllib.parse import urlparse, parse_qs
 VERSION = "0.2.0"
 SERVICE = "agentic-review-local-server"
 
+# Origins always permitted to reach the bridge, in addition to any --allow-origin
+# values and the loopback shell we serve ourselves. This is the project's
+# published GitHub Pages shell (origin = scheme + host only, no path). Override
+# or extend via --allow-origin / the AR_ALLOW_ORIGIN env var.
+DEFAULT_ALLOWED_ORIGINS = ("https://wangxi-dev.github.io",)
+
 # Extension -> renderer hint for the shell.
 MARKDOWN_EXT = {".md", ".markdown", ".mdown", ".mkd"}
 HTML_EXT = {".html", ".htm"}
@@ -111,6 +117,8 @@ class Config:
         # Same-origin requests from the shell we serve ourselves are always fine.
         self.allow_origins.add("http://localhost:%d" % self.port)
         self.allow_origins.add("http://127.0.0.1:%d" % self.port)
+        # The published GitHub Pages shell is always allowed too.
+        self.allow_origins.update(DEFAULT_ALLOWED_ORIGINS)
         # Comment store selection (pluggable; see make_store).
         self.comment_store = args.comment_store
         self.github_repo = args.github_repo

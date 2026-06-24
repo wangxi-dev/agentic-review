@@ -189,6 +189,17 @@ class OriginPolicyTests(unittest.TestCase):
         self.assertEqual(self._allowed(cfg, "http://127.0.0.1:8900"),
                          "http://127.0.0.1:8900")
 
+    def test_github_pages_always_allowed_in_strict_mode(self):
+        # The published Pages shell is allowed even under a strict allowlist
+        # that does not list it explicitly.
+        cfg = make_cfg(tempfile.mkdtemp(), port=8900,
+                       allow_origin=["https://foo.bar"])
+        pages = server.DEFAULT_ALLOWED_ORIGINS[0]
+        self.assertEqual(self._allowed(cfg, pages), pages)
+
+    def test_default_allowed_origins_includes_pages(self):
+        self.assertIn("https://wangxi-dev.github.io", server.DEFAULT_ALLOWED_ORIGINS)
+
 
 # ---------------------------------------------------------------------------
 class GitHubStoreTests(unittest.TestCase):
