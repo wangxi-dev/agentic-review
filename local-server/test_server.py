@@ -51,6 +51,8 @@ def make_repo():
         fh.write("line1\nline2\nline3\n")
     with open(os.path.join(root, "doc.md"), "w") as fh:
         fh.write("# Title\n")
+    with open(os.path.join(root, "img.bin"), "wb") as fh:
+        fh.write(b"\x89PNG\x00\x01\x02\x03original\xff")
     git(root, "add", "-A")
     git(root, "commit", "-qm", "init")
     # working-tree changes vs HEAD
@@ -59,6 +61,8 @@ def make_repo():
     os.remove(os.path.join(root, "doc.md"))
     with open(os.path.join(root, "new.js"), "w") as fh:
         fh.write("console.log('hi');\n")
+    with open(os.path.join(root, "img.bin"), "wb") as fh:
+        fh.write(b"\x89PNG\x00\x09\x08\x07changed\xfe")
     return root
 
 
@@ -354,6 +358,14 @@ class EndToEndHttpTests(unittest.TestCase):
         st, data = self.get("/api/diff?path=new.js")
         self.assertIn("new file", data["unified"])
         self.assertIn("b/new.js", data["unified"])
+
+    def test_diff_text_not_binary(self):
+        st, data = self.get("/api/diff?path=a.txt")
+        self.assertFalse(data.get("binary"))
+
+    def test_diff_binary_flagged(self):
+        st, data = self.get("/api/diff?path=img.bin")
+        self.assertTrue(data.get("binary"))
 
     def test_traversal_rejected(self):
         with self.assertRaises(urllib.error.HTTPError) as e:

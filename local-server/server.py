@@ -264,7 +264,10 @@ def read_diff(cfg: Config, rel):
     else:
         proc = git(cfg, "diff", cfg.diff_base, "--", norm, check=False)
         unified = proc.stdout
-    return {"path": rel, "base": cfg.diff_base, "unified": unified}
+    # Flag binary diffs so the shell can show the right message rather than a
+    # misleading "no diff".
+    binary = ("Binary files " in unified) or ("GIT binary patch" in unified)
+    return {"path": rel, "base": cfg.diff_base, "unified": unified, "binary": binary}
 
 
 # ---------------------------------------------------------------------------

@@ -85,13 +85,31 @@
       return;
     }
     try {
-      state.manifest = await apiGet("/api/manifest");
-      $("repo").textContent = state.manifest.root + "  (base " + state.manifest.base + ")";
-      await loadAllComments();
-      renderFileList();
+      await reloadManifest();
     } catch (e) {
       showNotice("Failed to load manifest: " + e.message, true);
     }
+  }
+
+  // Fetch the manifest + comments and re-render the file list. Returns the
+  // set of file paths currently considered changed.
+  async function reloadManifest() {
+    state.manifest = await apiGet("/api/manifest");
+    $("repo").textContent = state.manifest.root + "  (base " + state.manifest.base + ")";
+    await loadAllComments();
+    renderFileList();
+    if (state.current) markActiveFile(state.current.path);
+    return manifestPaths();
+  }
+
+  function manifestPaths() {
+    return ((state.manifest && state.manifest.files) || []).map(function (f) { return f.path; });
+  }
+  function manifestHas(path) {
+    return manifestPaths().indexOf(path) !== -1;
+  }
+  function diffBaseLabel() {
+    return (state.manifest && state.manifest.base) || "the diff base";
   }
 
   async function loadAllComments() {
@@ -420,8 +438,8 @@
     var c = $("content");
     var data = await apiGet("/api/diff?path=" + encodeURIComponent(state.current.path));
     clear(c);
-    if (!data.unified || !data.unified.trim()) {
-      c.appendChild(el("div", "notice", "No textual diff (file may be binary or unchanged)."));
+    if (!data.unified || !data.unified.trim() || data.binary) {
+      await renderEmptyDiff(c, data);
       return;
     }
     if (window.Diff2Html && window.DOMPurify) {
@@ -438,6 +456,35 @@
       pre.textContent = data.unified;
       c.appendChild(pre);
     }
+  }
+
+  // An empty (or binary) diff for a listed file. Distinguish binary, a genuinely
+  // unchanged file, and a stale file list (e.g. the change was just committed or
+  // reverted since the manifest loaded).
+  async function renderEmptyDiff(c, data) {
+    if (data.binary) {
+      c.appendChild(el("div", "notice",
+        "Binary file — no textual diff. (Switch to full mode if it is actually text.)"));
+      return;
+    }
+    var path = state.current.path;
+    var wasListed = manifestHas(path);
+    try { await reloadManifest(); } catch (e) { /* ignore; show generic message */ }
+    var stillListed = manifestHas(path);
+    if (wasListed && !stillListed) {
+      var msg = el("div", "notice");
+      msg.appendChild(document.createTextNode(
+        "No changes vs " + diffBaseLabel() + " anymore — this file was committed " +
+        "or reverted since the list loaded, so it dropped out of the review. " +
+        "The file list has been refreshed."));
+      c.appendChild(msg);
+      markActiveFile(path);
+      return;
+    }
+    c.appendChild(el("div", "notice",
+      "No textual diff vs " + (data.base || diffBaseLabel()) + " (the file is unchanged). " +
+      "To review committed history instead, relaunch with a different diff base " +
+      "(e.g. AR_DIFF_BASE=HEAD~1 or a branch name)."));
   }
 
   // Attach anchoring + inline threads to a diff2html line-by-line table.
@@ -755,7 +802,27 @@
       r.classList.remove("sel-line"); r.classList.remove("d2h-sel"); r.classList.remove("sel-block");
     });
   });
-  $("reload").addEventListener("click", loadManifest);
+  $("reload").addEventListener("click", refreshAll);
+
+  // Re-sync the manifest and re-render whatever file is open (clearing any
+  // cached content), so a committed/reverted change is picked up immediately.
+  async function refreshAll() {
+    state.content = null;
+    try {
+      await reloadManifest();
+    } catch (e) {
+      showNotice("Failed to refresh: " + e.message, true);
+      return;
+    }
+    if (state.current && manifestHas(state.current.path)) {
+      state.comments = commentsForPath(state.current.path);
+      renderCommentPanel();
+      await loadAndRender();
+    } else if (state.current) {
+      state.current = null;
+      showNotice("Select a file.", false);
+    }
+  }
 
   loadManifest();
 })();

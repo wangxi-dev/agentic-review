@@ -54,6 +54,18 @@ Requirements: Python 3.8+ and `git` on `PATH`. No third-party packages for the
 server or skill; the shell loads highlight.js / marked / DOMPurify / diff2html
 from a CDN.
 
+### What counts as "under review" (the diff base)
+
+By default the review shows **uncommitted changes** (working tree vs `HEAD`), so
+once a change is committed it drops out of the review — the shell auto-refreshes
+and tells you when that happens. To review **committed** history instead, set the
+diff base to an earlier ref:
+
+```bash
+AR_DIFF_BASE=HEAD~1 python3 .../scripts/launch.py     # review the last commit
+python3 local-server/server.py --root . --diff-base main --port 8900  # vs main
+```
+
 ## Tests
 
 ```bash
