@@ -6,7 +6,7 @@ import subprocess
 from ar_core import (
     Config, HttpError, looks_binary,
     PYTHON_EXE, CHECKER_EXTS, CHECKER_TIMEOUT, CHECKER_MAX_OUTPUT,
-    CHECKER_MAX_FINDINGS,
+    CHECKER_MAX_FINDINGS, NO_WINDOW,
 )
 from ar_manifest import build_manifest
 
@@ -26,7 +26,8 @@ def _checker_command(path):
 def _describe_checker(path):
     try:
         proc = subprocess.run(_checker_command(path) + ["--describe"],
-                              capture_output=True, text=True, timeout=CHECKER_TIMEOUT)
+                              capture_output=True, text=True, timeout=CHECKER_TIMEOUT,
+                              creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return {}
     if proc.returncode == 0 and proc.stdout.strip():
@@ -79,7 +80,8 @@ def _run_one_checker(checker, rel, content):
     try:
         proc = subprocess.run(
             _checker_command(checker["_path"]) + [rel],
-            input=content, capture_output=True, text=True, timeout=CHECKER_TIMEOUT)
+            input=content, capture_output=True, text=True, timeout=CHECKER_TIMEOUT,
+            creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         entry["error"] = "checker timed out after %ds" % CHECKER_TIMEOUT
         return entry

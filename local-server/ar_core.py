@@ -48,6 +48,13 @@ BINARY_EXT = {
 
 MAX_CONTENT_BYTES = 5 * 1024 * 1024  # refuse to inline anything bigger than 5 MiB
 
+# The bridge usually runs as a detached (console-less) background process. On
+# Windows, a console-less parent spawning a console app (git.exe, python.exe)
+# makes the OS allocate a fresh conhost.exe console for *every* spawn — ~1s each,
+# worse under Defender. CREATE_NO_WINDOW suppresses that allocation and is a
+# no-op (0) on POSIX, where there is no console penalty.
+NO_WINDOW = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
 
 def now_iso():
     return datetime.now(timezone.utc).isoformat()
@@ -182,6 +189,7 @@ def git(cfg: Config, *args, check=True):
     proc = subprocess.run(
         ["git", "-C", cfg.root, *args],
         capture_output=True, text=True, encoding="utf-8", errors="replace",
+        creationflags=NO_WINDOW,
     )
     if check and proc.returncode != 0:
         raise HttpError(500, "git %s failed: %s" % (" ".join(args), proc.stderr.strip()))
