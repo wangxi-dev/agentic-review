@@ -117,6 +117,39 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
   unchanged. Each file is under the 800-LoC limit (largest is `ar_comments` at
   270).
 
+### 6. Threaded comment conversations (human ↔ agent)
+Today a comment is a one-way note: the human writes it, the agent reads it via
+`take-feedback`, and the only states are exists / edited / deleted. Make a comment
+a small **thread** so the human and the agent can have a back-and-forth on it in
+the shell, and give each thread a lifecycle.
+- **Replies.** Allow appending replies to a comment (both the human in the UI and
+  the agent programmatically), rendered as an inline thread under the anchored
+  line/block. Each reply carries `author` ("human" / "agent"), `text`,
+  `createdAt`. The agent posts a reply (e.g. "done in <commit>", "skipped because
+  …", "can you clarify?") instead of silently acting.
+- **Status / lifecycle.** Add a per-comment status the human controls in the UI:
+  `open` → `resolved` / `rejected` / `wont-fix` (and maybe `needs-discussion`).
+  The agent can *propose* a status (e.g. mark "addressed") but the human has the
+  final say — so the human can **close**, **reject**, or keep **discussing** a
+  comment rather than the agent unilaterally resolving it.
+- **take-feedback semantics.** `take-feedback` should return the full thread and
+  the current status, and by default surface only `open` / `needs-discussion`
+  comments so the agent works the live set; add a flag to include resolved ones.
+  Each comment's last author matters — if the human replied last, it's the agent's
+  turn; if the agent replied last and status is still open, it's waiting on the
+  human.
+- **Storage / API.** Extend the comment schema with `replies: [...]` and `status`,
+  and the pluggable store interface accordingly (the GitHub-issue store maps
+  naturally: replies → issue comments, status → labels/close). New endpoints:
+  `POST /api/comments/reply?id=…` and `PATCH /api/comments?id=…` (status). Keep
+  the existing single-comment shape backward-compatible (a comment with no replies
+  and implicit `open` status behaves as today).
+- **UI.** Show the thread inline (existing anchor rendering), a reply box, a status
+  chip, and let the human set status. Distinguish human vs agent replies visually.
+- Why interesting: turns the review from a one-shot comment dump into an actual
+  conversation, so disagreements get discussed and closed explicitly instead of
+  the agent guessing. Don't implement yet — design item.
+
 ## Smaller follow-ups
 
 - Comment edit currently only edits text; consider re-anchoring (move a comment to
