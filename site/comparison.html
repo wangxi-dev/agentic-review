@@ -1,0 +1,137 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agentic-review — inspiration &amp; why I rebuilt the wheel</title>
+  <link rel="stylesheet" href="styles.css" />
+  <style>
+    /* Scoped extras layered on the shared design tokens. */
+    .reason { display: grid; grid-template-columns: 2.2rem 1fr; gap: 0.2rem 0.7rem; margin: 1.2rem 0; }
+    .reason .ricon {
+      grid-row: span 2; width: 2.2rem; height: 2.2rem; border-radius: 8px;
+      background: var(--panel); border: 1px solid var(--border);
+      display: flex; align-items: center; justify-content: center; font-size: 1.1rem;
+    }
+    .reason h3 { margin: 0; font-size: 1.02rem; }
+    .reason p { margin: 0.15rem 0 0; }
+
+    .future { border: 1px dashed var(--accent); border-radius: 10px; padding: 1rem 1.1rem; margin: 1rem 0; background: #f7fbff; }
+    .future h3 { margin-top: 0; }
+    .flow { display: flex; flex-wrap: wrap; align-items: center; gap: 0.4rem; margin: 0.8rem 0 0; font-size: 0.85rem; }
+    .flow .node { border: 1px solid var(--border); border-radius: 999px; padding: 0.2rem 0.7rem; background: #fff; font-weight: 600; }
+    .flow .node.accent { border-color: var(--accent); color: var(--accent); }
+    .flow .arrow { color: var(--muted); }
+  </style>
+</head>
+<body class="doc">
+  <nav class="doc-nav">
+    <strong>agentic-review</strong>
+    <a href="index.html">Home</a>
+    <a href="guideline.html">Setup guide</a>
+    <a href="review.html">Review shell</a>
+    <a href="comparison.html" class="active">Why rebuild</a>
+    <span class="spacer"></span>
+    <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">GitHub ↗</a>
+  </nav>
+
+  <main class="doc-wrap">
+    <h1>Inspiration &amp; why I rebuilt the wheel</h1>
+
+    <div class="note">
+      <strong>Acknowledgement.</strong> The idea here is <strong>inspired by
+      <a href="https://dryotta.github.io/mdownreview/" target="_blank" rel="noopener">mdownreview</a></strong>
+      — a polished native desktop app for browsing and reviewing AI-generated
+      markdown and code. It nailed the core insight: humans need a fast, local loop
+      to review what agents produce. agentic-review takes that same insight and
+      rebuilds it around a different set of priorities.
+    </div>
+
+    <p class="lede">
+      So why rebuild the wheel instead of just using a great existing app?
+    </p>
+    <p>
+      Three reasons that matter to <em>how I actually work</em>. mdownreview is a
+      beautifully engineered product; agentic-review deliberately optimizes for
+      something else.
+    </p>
+
+    <div class="reason">
+      <div class="ricon">🪶</div>
+      <h3>Lightweight — zero install, zero dependencies</h3>
+      <p>
+        The bridge is pure Python standard library and the review shell is static
+        files. No build step, no package tree, no native toolchain, nothing to
+        install. If a machine has Python 3 and git, it can run the entire review
+        loop — versus installing, signing, and updating a native binary.
+      </p>
+    </div>
+
+    <div class="reason">
+      <div class="ricon">☁️</div>
+      <h3>Portable — drop it in OneDrive, use it everywhere</h3>
+      <p>
+        Because it's just a folder of scripts and a static page, I keep it in
+        <strong>OneDrive</strong> and every one of my devices picks it up
+        automatically — no per-device install, no separate updater, no version drift.
+        A native app means provisioning each machine on its own. Here the tool
+        follows me; I don't re-install it.
+      </p>
+    </div>
+
+    <div class="reason">
+      <div class="ricon">🔁</div>
+      <h3>Agentic-loop integration — and not tied to one agent</h3>
+      <p>
+        agentic-review isn't a separate app you alt-tab to — it's a
+        <strong>skill any coding agent can drive</strong> (not just one vendor's).
+        The agent <code>launch</code>es a review, you comment, and
+        <code>take-feedback</code> reads those comments straight back into the
+        session so the agent iterates. The review <em>is</em> a turn in the working
+        loop — coupling a standalone viewer can't give.
+      </p>
+    </div>
+
+    <h2>Where this is headed</h2>
+    <div class="future">
+      <h3>💬 The agent comments back — and discusses</h3>
+      <p>
+        Today feedback flows one way: human → agent. The next step is making comments
+        a <strong>two-way thread</strong>. When you leave a comment, the agent can
+        <strong>reply inline</strong> — explaining a trade-off, pushing back with a
+        reason, or asking a clarifying question — and you answer in the same thread.
+        Review stops being a hand-off and becomes a <strong>discussion</strong>.
+      </p>
+      <div class="flow">
+        <span class="node">human comments</span>
+        <span class="arrow">→</span>
+        <span class="node accent">agent replies / discusses</span>
+        <span class="arrow">→</span>
+        <span class="node">human responds</span>
+        <span class="arrow">→</span>
+        <span class="node accent">agent revises</span>
+      </div>
+    </div>
+
+    <div class="future">
+      <h3>👀 A proactive loop — the agent watches for comments</h3>
+      <p>
+        Further out: instead of the human running <code>take-feedback</code>, the agent
+        <strong>loops back on its own</strong> to <strong>proactively monitor</strong>
+        the comment store. As soon as you leave a comment in the shell, a watching
+        agent notices, picks it up, and starts acting on it — closing the loop without
+        anyone re-invoking the skill. The review shell becomes a live channel between
+        you and an agent that's always listening.
+      </p>
+    </div>
+
+    <p class="doc-footer">
+      Inspired by
+      <a href="https://dryotta.github.io/mdownreview/" target="_blank" rel="noopener">mdownreview</a>.
+      Rebuilt lightweight, portable, and agent-native. See the
+      <a href="https://github.com/wangxi-dev/agentic-review" target="_blank" rel="noopener">repository</a>
+      for the bridge server, design notes, and tests.
+    </p>
+  </main>
+</body>
+</html>
