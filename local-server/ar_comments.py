@@ -11,12 +11,20 @@ import uuid
 from ar_core import Config, HttpError, now_iso
 
 
+# A comment is a small thread: the anchored note plus a list of replies and a
+# lifecycle status. The human and the agent both take turns on it.
+VALID_STATUSES = ("open", "resolved", "rejected", "wont-fix", "needs-discussion")
+REPLY_AUTHORS = ("human", "agent")
+DEFAULT_STATUS = "open"
+
+
 class CommentStore:
     """Generic interface: persist and retrieve comments.
 
     Implementations must round-trip the comment dict (id, path, line, side,
-    range, text, author, createdAt) so the user's agent can read them back via
-    GET /api/comments regardless of where they are stored.
+    range, text, author, createdAt, status, replies) so the user's agent can
+    read the whole thread back via GET /api/comments regardless of where the
+    comments are stored.
     """
     def list(self):
         raise NotImplementedError
@@ -27,6 +35,14 @@ class CommentStore:
     def update(self, cid, fields):
         """Apply `fields` (e.g. {"text": ...}) to comment `cid`; return it or None."""
         raise HttpError(501, "this comment store does not support editing")
+
+    def add_reply(self, cid, reply):
+        """Append `reply` to comment `cid`'s thread; return the updated comment."""
+        raise HttpError(501, "this comment store does not support replies")
+
+    def set_status(self, cid, status):
+        """Set comment `cid`'s lifecycle status; return the updated comment."""
+        raise HttpError(501, "this comment store does not support status changes")
 
     def delete(self, cid):
         """Delete comment `cid`; return True if it existed."""
@@ -50,6 +66,19 @@ class FileCommentStore(CommentStore):
             raise HttpError(400, "invalid comment id")
         return os.path.join(self.directory, "%s.json" % cid)
 
+    def _read(self, cid):
+        path = self._path(cid)
+        if not os.path.isfile(path):
+            raise HttpError(404, "comment not found: %s" % cid)
+        with open(path, "r", encoding="utf-8") as fh:
+            return path, json.load(fh)
+
+    def _write(self, path, comment):
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(comment, fh, indent=2)
+        os.replace(tmp, path)
+
     def list(self):
         out = []
         for name in os.listdir(self.directory):
@@ -65,28 +94,33 @@ class FileCommentStore(CommentStore):
 
     def save(self, comment):
         with self._lock:
-            path = self._path(comment["id"])
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(comment, fh, indent=2)
-            os.replace(tmp, path)
+            self._write(self._path(comment["id"]), comment)
         return comment
 
     def update(self, cid, fields):
         with self._lock:
-            path = self._path(cid)
-            if not os.path.isfile(path):
-                raise HttpError(404, "comment not found: %s" % cid)
-            with open(path, "r", encoding="utf-8") as fh:
-                comment = json.load(fh)
+            path, comment = self._read(cid)
             for k in EDITABLE_FIELDS:
                 if k in fields:
                     comment[k] = fields[k]
             comment["updatedAt"] = now_iso()
-            tmp = path + ".tmp"
-            with open(tmp, "w", encoding="utf-8") as fh:
-                json.dump(comment, fh, indent=2)
-            os.replace(tmp, path)
+            self._write(path, comment)
+        return comment
+
+    def add_reply(self, cid, reply):
+        with self._lock:
+            path, comment = self._read(cid)
+            comment.setdefault("replies", []).append(reply)
+            comment["updatedAt"] = now_iso()
+            self._write(path, comment)
+        return comment
+
+    def set_status(self, cid, status):
+        with self._lock:
+            path, comment = self._read(cid)
+            comment["status"] = status
+            comment["updatedAt"] = now_iso()
+            self._write(path, comment)
         return comment
 
     def delete(self, cid):
@@ -199,13 +233,27 @@ class GitHubIssueCommentStore(CommentStore):
         return None, None
 
     def update(self, cid, fields):
+        def apply(comment):
+            for k in EDITABLE_FIELDS:
+                if k in fields:
+                    comment[k] = fields[k]
+        return self._mutate(cid, apply)
+
+    def add_reply(self, cid, reply):
+        return self._mutate(cid, lambda c: c.setdefault("replies", []).append(reply))
+
+    def set_status(self, cid, status):
+        def apply(comment):
+            comment["status"] = status
+        return self._mutate(cid, apply)
+
+    def _mutate(self, cid, fn):
+        """Find comment `cid`, apply `fn` in place, re-render its issue comment."""
         with self._lock:
             gh_id, comment = self._find_gh_id(cid)
             if gh_id is None:
                 raise HttpError(404, "comment not found: %s" % cid)
-            for k in EDITABLE_FIELDS:
-                if k in fields:
-                    comment[k] = fields[k]
+            fn(comment)
             comment["updatedAt"] = now_iso()
             self._runner([
                 "api", "--method", "PATCH",
@@ -267,4 +315,37 @@ def make_comment(cfg: Config, body):
         "text": text,
         "author": author,
         "createdAt": now_iso(),
+        "status": DEFAULT_STATUS,
+        "replies": [],
     }
+
+
+def make_reply(body):
+    """Validate and build a reply to attach to a comment thread.
+
+    A reply records who spoke (`human` / `agent`), the text, and a timestamp.
+    `make_reply` does not change the parent comment's status — that is a
+    separate, explicit action (PATCH /api/comments?id=…) so the lifecycle stays
+    auditable.
+    """
+    if not isinstance(body, dict):
+        raise HttpError(400, "body must be a JSON object")
+    text = body.get("text")
+    if not text or not isinstance(text, str) or not text.strip():
+        raise HttpError(400, "reply requires non-empty 'text'")
+    author = body.get("author")
+    if author not in REPLY_AUTHORS:
+        raise HttpError(400, "reply 'author' must be one of: %s" % ", ".join(REPLY_AUTHORS))
+    return {
+        "id": time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8],
+        "author": author,
+        "text": text,
+        "createdAt": now_iso(),
+    }
+
+
+def validate_status(status):
+    """Return `status` if it is a valid lifecycle value, else raise 400."""
+    if status not in VALID_STATUSES:
+        raise HttpError(400, "'status' must be one of: %s" % ", ".join(VALID_STATUSES))
+    return status

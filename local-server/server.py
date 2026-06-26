@@ -19,8 +19,12 @@ Endpoints (all JSON unless noted):
     GET  /api/manifest              -> {base, root, files:[...]}
     GET  /api/content?path=<rel>    -> {path, kind, content}   (415 binary, 403 traversal)
     GET  /api/diff?path=<rel>       -> {path, base, unified}   (&pretty=1: expanded JSON diff)
-    GET  /api/comments              -> {comments:[...]}
+    GET  /api/comments              -> {comments:[...]}   (each has status + replies[])
     POST /api/comments              -> {status:"ok", id}
+    PUT  /api/comments?id=<id>      -> edit comment text
+    PATCH /api/comments?id=<id>     -> set lifecycle status (open/resolved/rejected/...)
+    POST /api/comments/reply?id=<id>-> append a reply (author human|agent) to the thread
+    DELETE /api/comments?id=<id>    -> delete a comment
     POST /api/cleanup               -> {status:"ok"} then graceful shutdown
     GET  /<static>                  -> serves the shell from --site-dir (same-origin fallback)
 
@@ -57,7 +61,8 @@ from ar_checkers import (  # noqa: F401
 )
 from ar_comments import (  # noqa: F401
     CommentStore, FileCommentStore, GitHubIssueCommentStore,
-    make_store, make_comment, _gh_render, _gh_parse,
+    make_store, make_comment, make_reply, validate_status,
+    VALID_STATUSES, REPLY_AUTHORS, DEFAULT_STATUS, _gh_render, _gh_parse,
 )
 from ar_http import Handler, _inject_token  # noqa: F401
 

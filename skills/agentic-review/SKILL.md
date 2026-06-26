@@ -3,7 +3,7 @@ name: agentic-review
 description: Launch a local, human-in-the-loop review of AI-generated changes. Use when the user wants to review the agent's current diff (or all files) in a browser, run code checks, leave inline comments, propose a commit message for review, and feed that feedback back to the agent before continuing. Driven by a loopback bridge server and a static review shell.
 user-invocable: true
 allowed-tools: Bash, Read, Grep, Glob
-argument-hint: "[launch|precommit|take-feedback|cleanup] [review-comments-folder]"
+argument-hint: "[launch|precommit|take-feedback|reply|cleanup] [review-comments-folder]"
 ---
 
 # agentic-review
@@ -26,7 +26,8 @@ Commands map to scripts in `scripts/`:
 | ------------------------------ | ------------------ | ------------------------------------------ |
 | `agentic-review:launch`        | `launch.py`        | start the server, print the shell URL      |
 | `agentic-review:precommit`     | `precommit.py`     | stage a proposed commit message for review |
-| `agentic-review:take-feedback` | `take-feedback.py` | read reviewer comments back to the agent   |
+| `agentic-review:take-feedback` | `take-feedback.py` | read reviewer comment threads back         |
+| `agentic-review:reply`         | `reply.py`         | reply to a comment / set its status        |
 | `agentic-review:cleanup`       | `cleanup.py`       | shut down the server, delete temp comments |
 
 All resolve the bridge and the active session automatically (from
@@ -78,16 +79,43 @@ commit. The message is stored at `<repo>/.agentic-review/precommit/`.
 
 ## `agentic-review:take-feedback`
 
-Reads every stored comment and prints them grouped by file and ordered by line.
+Reads the stored comment **threads** and prints them grouped by file and ordered
+by line. Each comment shows its lifecycle status (`open`, `resolved`, `rejected`,
+`wont-fix`, `needs-discussion`), its replies, and a hint about whose turn it is.
 
 ```bash
-python3 skills/agentic-review/scripts/take-feedback.py
+python3 skills/agentic-review/scripts/take-feedback.py          # only live threads
+python3 skills/agentic-review/scripts/take-feedback.py --all    # include settled threads
+python3 skills/agentic-review/scripts/take-feedback.py --json   # raw comment objects
 ```
 
-Use the output to drive the next iteration: address each comment in the code,
-explain anything you intentionally skip, then re-run the review. Add `--json` to
-get the raw comment objects (`{id, path, line, side, range, text, author,
-createdAt}`) if you need to process them programmatically.
+By default only `open` / `needs-discussion` comments are shown (the set still
+awaiting the agent); pass `--all` to also see `resolved` / `rejected` /
+`wont-fix`. Use the output to drive the next iteration: address each open comment
+in the code, **reply** to explain what you did (see below), and re-run the review.
+`--json` emits the raw comment objects (`{id, path, line, side, range, text,
+author, createdAt, status, replies}`) if you need to process them programmatically.
+
+## `agentic-review:reply`
+
+Reply to a comment **as the agent** and/or move it through its lifecycle, so the
+review is a two-way conversation instead of a one-way comment dump. The human can
+always override the status in the shell.
+
+```bash
+# reply with an explanation
+python3 skills/agentic-review/scripts/reply.py --id <comment-id> --text "done in <commit>"
+# reply and flag for discussion
+python3 skills/agentic-review/scripts/reply.py --id <comment-id> --text "why here?" --status needs-discussion
+# resolve / reject without a reply
+python3 skills/agentic-review/scripts/reply.py --id <comment-id> --status resolved
+# long reply from stdin
+printf "%s" "$MSG" | python3 skills/agentic-review/scripts/reply.py --id <comment-id>
+```
+
+Get comment ids from `take-feedback --json` (the `id` field). `--status` accepts
+`open`, `resolved`, `rejected`, `wont-fix`, or `needs-discussion`. Give at least
+one of `--text` or `--status`.
 
 ## `agentic-review:cleanup`
 
@@ -106,9 +134,11 @@ prints the outstanding comment count so feedback is never lost by accident.
 ## Typical round trip
 
 1. `launch` → open the URL, user reviews the diff (or all files) and comments.
-2. `take-feedback` → read comments, make the requested changes.
-3. (optional) `precommit` → stage the commit message and have the user review it.
-4. `cleanup --force` once the user is satisfied; then commit.
+2. `take-feedback` → read the comment threads, make the requested changes.
+3. `reply` → reply to each comment explaining what you did and resolve / reject /
+   flag it for discussion; re-run `take-feedback` to confirm the live set is empty.
+4. (optional) `precommit` → stage the commit message and have the user review it.
+5. `cleanup --force` once the user is satisfied; then commit.
 
 ## Notes
 

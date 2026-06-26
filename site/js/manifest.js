@@ -31,11 +31,34 @@ export async function reloadManifest() {
 }
 
 // ---- file list --------------------------------------------------------
+// Paths that have comments but are not in the current change set (e.g. the
+// file was deleted, or the comment was left on an unchanged file then the
+// change set moved on). Without surfacing these, their threads would be
+// unreachable in the shell even though they still live in the store.
+export function orphanCommentPaths() {
+  var listed = {};
+  ((state.manifest && state.manifest.files) || []).forEach(function (f) {
+    listed[f.path] = true;
+  });
+  var seen = {}, out = [];
+  (state.allComments || []).forEach(function (c) {
+    if (!listed[c.path] && !seen[c.path]) { seen[c.path] = true; out.push(c.path); }
+  });
+  return out;
+}
+
+function fileNameInto(name, path) {
+  var slash = path.lastIndexOf("/");
+  if (slash >= 0) name.appendChild(el("span", "path-dir", path.slice(0, slash + 1)));
+  name.appendChild(document.createTextNode(path.slice(slash + 1)));
+}
+
 export function renderFileList() {
   var ul = $("files");
   clear(ul);
   var files = (state.manifest && state.manifest.files) || [];
-  if (!files.length) {
+  var orphans = orphanCommentPaths();
+  if (!files.length && !orphans.length) {
     ul.appendChild(el("li", "muted", "No changes vs " + state.manifest.base));
     return;
   }
@@ -51,16 +74,33 @@ export function renderFileList() {
       name.appendChild(document.createTextNode(f.label));
       name.title = f.label + " (" + f.path + ")";
     } else {
-      var slash = f.path.lastIndexOf("/");
-      if (slash >= 0) {
-        name.appendChild(el("span", "path-dir", f.path.slice(0, slash + 1)));
-      }
-      name.appendChild(document.createTextNode(f.path.slice(slash + 1)));
+      fileNameInto(name, f.path);
       name.title = f.path + (f.oldPath ? " (was " + f.oldPath + ")" : "");
     }
     li.appendChild(name);
     li.appendChild(el("span", "dot"));
     li.addEventListener("click", function () { openFile(f); });
+    ul.appendChild(li);
+  });
+  if (orphans.length) renderOrphanRows(ul, orphans);
+}
+
+// Rows for comments whose anchor file is no longer in the review.
+function renderOrphanRows(ul, orphans) {
+  ul.appendChild(el("li", "files-sep muted small",
+    "Comments on files no longer in the review"));
+  orphans.forEach(function (path) {
+    var li = el("li", "orphan has-comments");
+    li.dataset.path = path;
+    li.appendChild(el("span", "badge gone", "\u2715"));
+    var name = el("span", "name");
+    fileNameInto(name, path);
+    name.title = path + " (deleted or not in the current change set)";
+    li.appendChild(name);
+    li.appendChild(el("span", "dot"));
+    li.addEventListener("click", function () {
+      openFile({ path: path, orphan: true, kind: "text", renderer: "code" });
+    });
     ul.appendChild(li);
   });
 }

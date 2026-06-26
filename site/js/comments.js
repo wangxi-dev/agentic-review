@@ -45,6 +45,11 @@ function anchorText(cm) {
   if (cm.line != null) return "L" + cm.line;
   return "file";
 }
+
+// Lifecycle statuses the human (or agent) can set on a comment thread.
+var STATUSES = ["open", "needs-discussion", "resolved", "rejected", "wont-fix"];
+function commentStatus(cm) { return cm.status || "open"; }
+
 // Build an inline thread element for a list of comments.
 export function buildThread(comments) {
   var box = el("div", "thread");
@@ -54,17 +59,20 @@ export function buildThread(comments) {
   return box;
 }
 
-// A single comment with edit/delete controls, shared by inline + panel views.
+// A single comment (with its reply thread + status) shared by inline + panel.
 function commentItem(cm, cls) {
-  var item = el("div", cls);
+  var item = el("div", cls + " status-" + commentStatus(cm));
   var meta = el("div", "c-meta");
   var anchorSpan = el("span", "c-anchor", anchorText(cm) + (cm.side ? " " + cm.side : ""));
   anchorSpan.addEventListener("click", function () { jumpToLine(cm); });
   meta.appendChild(anchorSpan);
+  meta.appendChild(statusChip(cm));
   meta.appendChild(el("span", "", fmtTime(cm.createdAt) + (cm.updatedAt ? " (edited)" : "")));
   var actions = el("span", "c-actions");
+  var replyBtn = el("button", "c-act", "reply");
   var editBtn = el("button", "c-act", "edit");
   var delBtn = el("button", "c-act c-del", "delete");
+  actions.appendChild(replyBtn);
   actions.appendChild(editBtn);
   actions.appendChild(delBtn);
   meta.appendChild(actions);
@@ -73,9 +81,84 @@ function commentItem(cm, cls) {
   var textEl = el("div", "c-text", cm.text);
   item.appendChild(textEl);
 
+  var replies = cm.replies || [];
+  if (replies.length) item.appendChild(buildReplies(replies));
+
   editBtn.addEventListener("click", function () { startEdit(item, cm, textEl); });
   delBtn.addEventListener("click", function () { deleteComment(cm); });
+  replyBtn.addEventListener("click", function () { startReply(item, cm); });
   return item;
+}
+
+// The status chip is also the human's control: click it to cycle / pick a status.
+function statusChip(cm) {
+  var cur = commentStatus(cm);
+  var sel = el("select", "c-status-sel status-" + cur);
+  STATUSES.forEach(function (s) {
+    var opt = el("option", "", s);
+    opt.value = s;
+    if (s === cur) opt.selected = true;
+    sel.appendChild(opt);
+  });
+  sel.title = "Set this comment's status";
+  sel.addEventListener("change", function () { setStatus(cm, sel.value); });
+  sel.addEventListener("click", function (e) { e.stopPropagation(); });
+  return sel;
+}
+
+// Render the back-and-forth replies, distinguishing human vs agent visually.
+function buildReplies(replies) {
+  var wrap = el("div", "c-replies");
+  replies.forEach(function (r) {
+    var who = r.author === "agent" ? "agent" : "human";
+    var row = el("div", "c-reply reply-" + who);
+    var head = el("div", "c-reply-meta");
+    head.appendChild(el("span", "c-reply-who", who));
+    head.appendChild(el("span", "", fmtTime(r.createdAt)));
+    row.appendChild(head);
+    row.appendChild(el("div", "c-text", r.text));
+    wrap.appendChild(row);
+  });
+  return wrap;
+}
+
+function startReply(item, cm) {
+  if (item.querySelector(".c-reply-box")) return; // already replying
+  var box = el("div", "c-reply-box");
+  var ta = el("textarea", "c-edit-text");
+  ta.placeholder = "Reply to this comment…";
+  ta.rows = 2;
+  var row = el("div", "c-edit-row");
+  var send = el("button", "", "send reply");
+  var cancel = el("button", "ghost", "cancel");
+  row.appendChild(send); row.appendChild(cancel);
+  box.appendChild(ta); box.appendChild(row);
+  item.appendChild(box);
+  ta.focus();
+  cancel.addEventListener("click", function () { box.remove(); });
+  send.addEventListener("click", async function () {
+    var text = ta.value.trim();
+    if (!text) { ta.focus(); return; }
+    send.disabled = true;
+    try {
+      await apiPost("/api/comments/reply?id=" + encodeURIComponent(cm.id),
+                    { author: "human", text: text });
+      await refreshAfterCommentChange();
+    } catch (e) {
+      send.disabled = false;
+      alert("Reply failed: " + e.message);
+    }
+  });
+}
+
+async function setStatus(cm, status) {
+  if (status === commentStatus(cm)) return;
+  try {
+    await apiSend("PATCH", "/api/comments?id=" + encodeURIComponent(cm.id), { status: status });
+    await refreshAfterCommentChange();
+  } catch (e) {
+    alert("Status change failed: " + e.message);
+  }
 }
 
 function startEdit(item, cm, textEl) {

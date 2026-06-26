@@ -117,38 +117,29 @@ safe. So `port`/`api` only *locate* the bridge; the **token authorizes** it.
   unchanged. Each file is under the 800-LoC limit (largest is `ar_comments` at
   270).
 
-### 6. Threaded comment conversations (human ↔ agent)
-Today a comment is a one-way note: the human writes it, the agent reads it via
-`take-feedback`, and the only states are exists / edited / deleted. Make a comment
-a small **thread** so the human and the agent can have a back-and-forth on it in
-the shell, and give each thread a lifecycle.
-- **Replies.** Allow appending replies to a comment (both the human in the UI and
-  the agent programmatically), rendered as an inline thread under the anchored
-  line/block. Each reply carries `author` ("human" / "agent"), `text`,
-  `createdAt`. The agent posts a reply (e.g. "done in <commit>", "skipped because
-  …", "can you clarify?") instead of silently acting.
-- **Status / lifecycle.** Add a per-comment status the human controls in the UI:
-  `open` → `resolved` / `rejected` / `wont-fix` (and maybe `needs-discussion`).
-  The agent can *propose* a status (e.g. mark "addressed") but the human has the
-  final say — so the human can **close**, **reject**, or keep **discussing** a
-  comment rather than the agent unilaterally resolving it.
-- **take-feedback semantics.** `take-feedback` should return the full thread and
-  the current status, and by default surface only `open` / `needs-discussion`
-  comments so the agent works the live set; add a flag to include resolved ones.
-  Each comment's last author matters — if the human replied last, it's the agent's
-  turn; if the agent replied last and status is still open, it's waiting on the
-  human.
-- **Storage / API.** Extend the comment schema with `replies: [...]` and `status`,
-  and the pluggable store interface accordingly (the GitHub-issue store maps
-  naturally: replies → issue comments, status → labels/close). New endpoints:
-  `POST /api/comments/reply?id=…` and `PATCH /api/comments?id=…` (status). Keep
-  the existing single-comment shape backward-compatible (a comment with no replies
-  and implicit `open` status behaves as today).
-- **UI.** Show the thread inline (existing anchor rendering), a reply box, a status
-  chip, and let the human set status. Distinguish human vs agent replies visually.
-- Why interesting: turns the review from a one-shot comment dump into an actual
-  conversation, so disagreements get discussed and closed explicitly instead of
-  the agent guessing. Don't implement yet — design item.
+### 6. Threaded comment conversations (human ↔ agent) — ✅ done
+Implemented. A comment is now a small **thread** with a lifecycle, so the human
+and the agent take turns on it instead of the comment being a one-way note.
+- **Schema.** Every comment carries `status` (default `open`) and `replies: []`.
+  Each reply is `{id, author ("human"|"agent"), text, createdAt}`. Old comments
+  with neither field behave as an `open` thread with no replies (backward-compat;
+  readers use `c.get("status") or "open"` / `c.get("replies") or []`).
+- **API.** `POST /api/comments/reply?id=…` appends a reply (validated `author`,
+  non-empty `text`); `PATCH /api/comments?id=…` sets the status to one of
+  `open` / `resolved` / `rejected` / `wont-fix` / `needs-discussion`. Both the
+  files store and the GitHub-issue store implement `add_reply` / `set_status`
+  (the GitHub backend re-renders the hidden JSON payload, so replies+status
+  round-trip through the issue comment). See `ar_comments.py` (`make_reply`,
+  `validate_status`, store `_mutate`) and `ar_http.py` (do_PATCH + routes).
+- **take-feedback semantics.** Returns the full thread + status and by default
+  surfaces only `open` / `needs-discussion` comments (the live set); `--all`
+  includes settled ones. It prints a "whose turn" hint from the last author
+  (human spoke last on a live thread ⇒ agent's turn; agent spoke last ⇒ waiting
+  on the human). New `agentic-review:reply` command lets the agent reply and/or
+  set status from the CLI (`--id`, `--text`/stdin, `--status`).
+- **UI.** The inline thread renders replies (human vs agent styled distinctly), a
+  per-comment status chip that doubles as the human's status selector, and a
+  reply box. See `site/js/comments.js` + `site/styles.css`.
 
 ## Smaller follow-ups
 
@@ -182,4 +173,14 @@ the shell, and give each thread a lifecycle.
   `ar_content` / `ar_checkers` / `ar_comments` / `ar_http`); `server.py` is the
   slim entry/orchestrator that re-exports their public API. Each file is under
   the 800-LoC checker.
-- Tests: 64 unittest cases green.
+- Threaded comments (human ↔ agent): each comment has a `status`
+  (open/resolved/rejected/wont-fix/needs-discussion) and a `replies[]` thread.
+  `POST /api/comments/reply?id=…` + `PATCH /api/comments?id=…`; both stores
+  support it; new `agentic-review:reply` CLI; `take-feedback` shows threads,
+  status, and whose turn (default = open/needs-discussion, `--all` for settled).
+- Orphaned comments stay reachable: the shell lists comments whose anchor file
+  is no longer in the change set (e.g. deleted) under a "files no longer in the
+  review" section, and shows the preserved thread when opened
+  (`site/js/manifest.js` `orphanCommentPaths`/`renderOrphanRows`, `viewer.js`
+  orphan branch).
+- Tests: 77 unittest cases green.

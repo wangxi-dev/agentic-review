@@ -18,6 +18,7 @@ import { renderMermaidIn } from "./mermaid.js";
 
 // ---- open a file ------------------------------------------------------
 export function availableModes(f) {
+  if (f.orphan) return [];  // deleted / not in change set: thread only, no content
   if (f.pseudo) return ["preview", "full"];  // proposed commit message: no diff
   var changed = !!f.status;
   if (f.renderer === "markdown") return ["preview", "full", "diff"];
@@ -70,6 +71,16 @@ export function renderModeTabs(modes) {
 export async function loadAndRender() {
   var c = $("content");
   clear(c);
+  // Orphaned comment thread: the anchor file is gone, so there is no content or
+  // diff to show — surface the preserved thread instead of failing to load.
+  if (state.current.orphan) {
+    c.appendChild(el("div", "notice",
+      "This file is no longer part of the review (deleted, or outside the "
+      + "current change set). Its comment thread is preserved \u2014 see below "
+      + "and in the panel on the right."));
+    renderFileLevelThread();
+    return;
+  }
   c.appendChild(el("div", "notice", "loading…"));
   try {
     if (state.mode === "diff") {

@@ -16,7 +16,7 @@ from ar_core import Config, HttpError, SERVICE, VERSION
 from ar_manifest import build_manifest, build_file_tree, write_precommit
 from ar_content import read_content, read_diff
 from ar_checkers import discover_checkers, run_checkers, run_checkers_all
-from ar_comments import CommentStore, make_comment
+from ar_comments import CommentStore, make_comment, make_reply, validate_status
 
 
 def _inject_token(body, token):
@@ -56,7 +56,7 @@ class Handler(BaseHTTPRequestHandler):
         if allowed:
             self.send_header("Access-Control-Allow-Origin", allowed)
             self.send_header("Vary", "Origin")
-            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, PATCH, DELETE, OPTIONS")
             self.send_header("Access-Control-Allow-Headers", "Content-Type, X-AR-Token")
             if self.headers.get("Access-Control-Request-Private-Network") == "true":
                 self.send_header("Access-Control-Allow-Private-Network", "true")
@@ -112,6 +112,9 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self._dispatch("PUT")
+
+    def do_PATCH(self):
+        self._dispatch("PATCH")
 
     def do_DELETE(self):
         self._dispatch("DELETE")
@@ -183,6 +186,22 @@ class Handler(BaseHTTPRequestHandler):
                 raise HttpError(400, "edit requires non-empty 'text'")
             updated = self.store.update(cid, {"text": text})
             self._send_json(200, {"status": "ok", "comment": updated})
+        elif path == "/api/comments" and method == "PATCH":
+            cid = (query.get("id") or [None])[0]
+            if not cid:
+                raise HttpError(400, "missing comment id")
+            body = self._read_json_body() or {}
+            status = validate_status(body.get("status"))
+            updated = self.store.set_status(cid, status)
+            self._send_json(200, {"status": "ok", "comment": updated})
+        elif path == "/api/comments/reply" and method == "POST":
+            cid = (query.get("id") or [None])[0]
+            if not cid:
+                raise HttpError(400, "missing comment id")
+            reply = make_reply(self._read_json_body() or {})
+            updated = self.store.add_reply(cid, reply)
+            self._send_json(200, {"status": "ok", "replyId": reply["id"],
+                                  "comment": updated})
         elif path == "/api/comments" and method == "DELETE":
             cid = (query.get("id") or [None])[0]
             if not cid:

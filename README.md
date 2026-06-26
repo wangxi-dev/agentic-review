@@ -29,7 +29,8 @@ Windows, macOS, and Linux. Use your platform's Python 3 (`python3`, `python`, or
 `py -3`).
 
 - `agentic-review:launch [review-comments-folder]` — start the local server.
-- `agentic-review:take-feedback` — feed the stored comments back to the agent.
+- `agentic-review:take-feedback` — feed the stored comment threads back to the agent.
+- `agentic-review:reply` — reply to a comment / set its status (resolve, reject, discuss).
 - `agentic-review:cleanup` — shut down the server and remove the temp comments.
 
 ## Quick start
@@ -39,7 +40,8 @@ Windows, macOS, and Linux. Use your platform's Python 3 (`python3`, `python`, or
 python3 path/to/agentic-review/skills/agentic-review/scripts/launch.py
 # open the printed URL, e.g. http://127.0.0.1:8900/review.html  (token auto-injected)
 # review and comment, then:
-python3 .../scripts/take-feedback.py        # read comments back
+python3 .../scripts/take-feedback.py        # read comment threads back
+python3 .../scripts/reply.py --id <id> --text "done" --status resolved  # reply + resolve
 python3 .../scripts/cleanup.py --force      # tear down
 ```
 
@@ -183,7 +185,7 @@ local-server/checkers/        # built-in checker CLIs (loc.py, complexity.py)
 local-server/test_server.py   # unit + end-to-end tests
 site/                         # static site: index.html (overview), guideline.html (setup),
                               #   review.html (review shell), app.js + js/ modules, styles.css
-skills/agentic-review/        # SKILL.md + scripts/ (launch, precommit, take-feedback, cleanup)
+skills/agentic-review/        # SKILL.md + scripts/ (launch, precommit, take-feedback, reply, cleanup)
 examples/                     # sample files, one per renderer
 ```
 
