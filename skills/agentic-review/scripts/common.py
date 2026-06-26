@@ -76,6 +76,11 @@ def api_post(state, path, body=None):
     return _request("POST", base_url(state) + path, state.get("token"), body=body)
 
 
+def api_send(state, method, path, body=None):
+    """Issue an arbitrary-method request (e.g. PATCH) to the bridge."""
+    return _request(method, base_url(state) + path, state.get("token"), body=body)
+
+
 def ping(port, timeout=1.0):
     try:
         _request("GET", "http://127.0.0.1:%d/ping" % port, None, timeout=timeout)

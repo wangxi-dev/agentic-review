@@ -107,8 +107,15 @@ aside, main { overflow: auto; min-width: 0; }
 .badge.modified { color: var(--modified); }
 .badge.renamed { color: var(--accent); }
 .badge.precommit { color: #8250df; }
+.badge.gone { color: var(--deleted); opacity: 0.8; }
 #files li.pseudo { background: #faf5ff; }
 #files li.pseudo .name { font-weight: 600; color: #6639ba; }
+#files li.orphan .name { color: var(--muted); font-style: italic; }
+#files li.files-sep {
+  cursor: default; background: #fbfbf6; border-top: 1px solid var(--border);
+  padding-top: 0.4rem; padding-bottom: 0.3rem; letter-spacing: 0.01em;
+}
+#files li.files-sep:hover { background: #fbfbf6; }
 .dot {
   flex: none; width: 7px; height: 7px; border-radius: 50%;
   background: var(--accent); visibility: hidden;
@@ -319,6 +326,37 @@ button.c-act.c-del:hover { color: var(--deleted); border-color: var(--deleted); 
 .c-edit-row { display: flex; gap: 0.4rem; margin-top: 0.3rem; }
 .c-edit-row button { font-size: 0.75rem; padding: 0.2rem 0.6rem; }
 .panel-c { width: 100%; }
+
+/* threaded replies + status lifecycle */
+.c-status-sel {
+  font: inherit; font-size: 0.68rem; line-height: 1.3; padding: 0 0.3rem;
+  border: 1px solid var(--border); border-radius: 999px; background: #fff;
+  color: var(--muted); cursor: pointer; text-transform: lowercase;
+}
+.c-status-sel.status-open { color: var(--accent); border-color: var(--accent); }
+.c-status-sel.status-resolved { color: #1a7f37; border-color: #1a7f37; background: #eaf6ec; }
+.c-status-sel.status-rejected { color: var(--deleted); border-color: var(--deleted); background: #fbeded; }
+.c-status-sel.status-wont-fix { color: #6e7781; border-color: #d0d7de; background: #f3f4f6; }
+.c-status-sel.status-needs-discussion { color: #9a6700; border-color: #d4a72c; background: #fff8e5; }
+.c-replies {
+  margin: 0.35rem 0 0 0.7rem; border-left: 2px solid #e6e2cf; padding-left: 0.6rem;
+  display: flex; flex-direction: column; gap: 0.35rem;
+}
+.c-reply { border-radius: 6px; padding: 0.3rem 0.45rem; }
+.c-reply.reply-human { background: #eef4ff; }
+.c-reply.reply-agent { background: #f1f0ff; border: 1px dashed #cdc8f0; }
+.c-reply-meta { font-size: 0.7rem; color: var(--muted); display: flex; gap: 0.4rem; align-items: center; }
+.c-reply-who {
+  font-weight: 600; text-transform: uppercase; letter-spacing: 0.03em; font-size: 0.62rem;
+  padding: 0 0.3rem; border-radius: 4px;
+}
+.reply-human .c-reply-who { color: #0b5cad; background: #d8e6ff; }
+.reply-agent .c-reply-who { color: #5b4fd0; background: #e2defb; }
+.c-reply-box { margin-top: 0.3rem; }
+/* a resolved/rejected/wont-fix thread reads as settled */
+.status-resolved > .c-meta > .c-anchor,
+.status-rejected > .c-meta > .c-anchor,
+.status-wont-fix > .c-meta > .c-anchor { opacity: 0.7; }
 
 /* ---------------------------------------------------------------------------
    Doc pages (index.html landing, guideline.html) — reuse the design tokens

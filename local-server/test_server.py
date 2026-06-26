@@ -190,9 +190,39 @@ class CommentValidationTests(unittest.TestCase):
         self.assertIn("id", c)
         self.assertIn("createdAt", c)
 
+    def test_new_comment_has_open_status_and_empty_replies(self):
+        c = server.make_comment(self.cfg, {"path": "a.txt", "text": "hi"})
+        self.assertEqual(c["status"], "open")
+        self.assertEqual(c["replies"], [])
+
     def test_path_must_be_in_root(self):
         with self.assertRaises(server.HttpError):
             server.make_comment(self.cfg, {"path": "../x", "text": "hi"})
+
+
+# ---------------------------------------------------------------------------
+class ReplyValidationTests(unittest.TestCase):
+    def test_requires_text(self):
+        with self.assertRaises(server.HttpError):
+            server.make_reply({"author": "agent", "text": "  "})
+
+    def test_requires_known_author(self):
+        with self.assertRaises(server.HttpError):
+            server.make_reply({"author": "robot", "text": "hi"})
+
+    def test_valid_reply(self):
+        r = server.make_reply({"author": "agent", "text": "done"})
+        self.assertEqual(r["author"], "agent")
+        self.assertEqual(r["text"], "done")
+        self.assertIn("id", r)
+        self.assertIn("createdAt", r)
+
+    def test_validate_status_rejects_unknown(self):
+        with self.assertRaises(server.HttpError):
+            server.validate_status("closed")
+
+    def test_validate_status_accepts_known(self):
+        self.assertEqual(server.validate_status("resolved"), "resolved")
 
 
 # ---------------------------------------------------------------------------
@@ -309,6 +339,37 @@ class GitHubStoreTests(unittest.TestCase):
         self.assertTrue(store.delete("abc"))
         self.assertEqual(store.list(), [])
         self.assertFalse(store.delete("abc"))
+
+    def test_store_reply_and_status_with_fake_runner(self):
+        items = []
+        next_id = [200]
+
+        def fake_runner(args, input_text=None):
+            if "POST" in args:
+                body = next(a.split("=", 1)[1] for a in args if a.startswith("body="))
+                items.append({"id": next_id[0], "body": body})
+                next_id[0] += 1
+                return ""
+            if "PATCH" in args:
+                gh = int(args[3].rsplit("/", 1)[-1])
+                body = next(a.split("=", 1)[1] for a in args if a.startswith("body="))
+                for it in items:
+                    if it["id"] == gh:
+                        it["body"] = body
+                return ""
+            return json.dumps(items)  # list
+
+        store = server.GitHubIssueCommentStore("o/r", 7, runner=fake_runner)
+        store.save({"id": "z1", "path": "a.txt", "line": 1, "side": None, "range": None,
+                    "text": "do x", "author": None, "createdAt": "2026-01-01T00:00:00Z",
+                    "status": "open", "replies": []})
+        store.add_reply("z1", {"id": "r1", "author": "agent", "text": "done",
+                               "createdAt": "2026-01-02T00:00:00Z"})
+        store.set_status("z1", "resolved")
+        got = store.list()[0]
+        self.assertEqual(got["status"], "resolved")
+        self.assertEqual(len(got["replies"]), 1)
+        self.assertEqual(got["replies"][0]["author"], "agent")
 
 
 # ---------------------------------------------------------------------------
@@ -489,6 +550,46 @@ class EndToEndHttpTests(unittest.TestCase):
     def test_comment_delete_missing(self):
         with self.assertRaises(urllib.error.HTTPError) as e:
             self._send("DELETE", "/api/comments?id=nonexistent", None)
+        self.assertEqual(e.exception.code, 404)
+
+    def test_comment_reply_appends_to_thread(self):
+        _, data = self.post("/api/comments", {"path": "a.txt", "line": 3, "text": "fix this"})
+        cid = data["id"]
+        st, res = self.post("/api/comments/reply?id=" + cid,
+                            {"author": "agent", "text": "done in abc123"})
+        self.assertEqual(st, 200)
+        self.assertEqual(res["comment"]["replies"][0]["author"], "agent")
+        self.assertEqual(res["comment"]["replies"][0]["text"], "done in abc123")
+        _, listed = self.get("/api/comments")
+        match = [c for c in listed["comments"] if c["id"] == cid][0]
+        self.assertEqual(len(match["replies"]), 1)
+
+    def test_comment_reply_rejects_bad_author(self):
+        _, data = self.post("/api/comments", {"path": "a.txt", "line": 3, "text": "x"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post("/api/comments/reply?id=" + data["id"],
+                      {"author": "nobody", "text": "hi"})
+        self.assertEqual(e.exception.code, 400)
+
+    def test_comment_status_patch(self):
+        _, data = self.post("/api/comments", {"path": "a.txt", "line": 4, "text": "x"})
+        cid = data["id"]
+        st, res = self._send("PATCH", "/api/comments?id=" + cid, {"status": "resolved"})
+        self.assertEqual(st, 200)
+        self.assertEqual(res["comment"]["status"], "resolved")
+        _, listed = self.get("/api/comments")
+        match = [c for c in listed["comments"] if c["id"] == cid][0]
+        self.assertEqual(match["status"], "resolved")
+
+    def test_comment_status_rejects_unknown(self):
+        _, data = self.post("/api/comments", {"path": "a.txt", "line": 4, "text": "x"})
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self._send("PATCH", "/api/comments?id=" + data["id"], {"status": "closed"})
+        self.assertEqual(e.exception.code, 400)
+
+    def test_reply_missing_comment(self):
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post("/api/comments/reply?id=nope", {"author": "agent", "text": "hi"})
         self.assertEqual(e.exception.code, 404)
 
     def test_tree_lists_all_files(self):

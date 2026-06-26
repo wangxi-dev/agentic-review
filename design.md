@@ -99,8 +99,11 @@ timeout.
 
 - `agentic-review:launch [review-comments-folder]` — start the server and tell it
   where to store comments. Prints the URL (and token, if used).
-- `agentic-review:take-feedback` — read all stored comments so the agent can loop
-  again.
+- `agentic-review:take-feedback` — read the stored comment threads (status +
+  replies) so the agent can loop again. Shows only `open` / `needs-discussion`
+  by default; `--all` includes settled threads.
+- `agentic-review:reply` — reply to a comment as the agent and/or set its status
+  (`--id`, `--text`/stdin, `--status`), turning the review into a conversation.
 - `agentic-review:cleanup` — shut down the server and delete the temp comments.
   **Remind the user to take a last look first**, and run `take-feedback` before
   cleanup so no feedback is lost.
@@ -118,9 +121,30 @@ text, and a timestamp/id. Comments can be **edited and deleted** from the shell
 (`PUT`/`DELETE /api/comments?id=…`), and the inline thread, side panel, and the
 agent's `take-feedback` view all reflect the current state.
 
+Each comment is also a small **thread with a lifecycle**, so the human and the
+agent can have a back-and-forth instead of the comment being a one-way note:
+
+- **Replies.** A comment carries `replies: [{id, author, text, createdAt}]` where
+  `author` is `"human"` or `"agent"`. The human replies in the shell; the agent
+  replies via `POST /api/comments/reply?id=…` (or the `agentic-review:reply`
+  command) — e.g. "done in <commit>", "skipped because …", "can you clarify?".
+- **Status.** A comment carries `status` — one of `open` (default), `resolved`,
+  `rejected`, `wont-fix`, `needs-discussion` — set via `PATCH /api/comments?id=…`.
+  Both the human (status chip in the shell) and the agent (`reply --status`) can
+  move a thread through its lifecycle; the human always has the final say in the
+  UI.
+- **take-feedback** returns the whole thread and status, surfaces only the live
+  set (`open` / `needs-discussion`) by default (`--all` for settled ones), and
+  flags whose turn it is from the last reply's author.
+
+Backward compatibility: a comment with no `replies`/`status` is treated as an
+`open` thread with no replies, so old stored comments keep working.
+
 The store must be **pluggable behind a generic interface** (list / save / update /
-delete) so users can swap files for another channel (e.g. GitHub issues, or any
-other storage) — as long as the user's agent can still read the comments back.
+add_reply / set_status / delete) so users can swap files for another channel (e.g.
+GitHub issues, where replies map to issue comments and status to the embedded
+payload, or any other storage) — as long as the user's agent can still read the
+threads back.
 
 ## Does this plan work?
 
