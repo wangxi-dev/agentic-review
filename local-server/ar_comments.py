@@ -3,6 +3,7 @@ issue reference backend) and comment validation/creation.
 """
 import json
 import os
+import re
 import subprocess
 import threading
 import time
@@ -16,6 +17,85 @@ from ar_core import Config, HttpError, now_iso
 VALID_STATUSES = ("open", "resolved", "rejected", "wont-fix", "needs-discussion")
 REPLY_AUTHORS = ("human", "agent")
 DEFAULT_STATUS = "open"
+
+# Cross-review identity: every comment/reply records WHO spoke. There are three
+# voices — the human, the agent that wrote the code (author-agent), and the agent
+# that reviewed it (review-agent) — plus which tool/model that agent was.
+AUTHOR_ROLES = ("human", "author-agent", "review-agent")
+_ROLE_PREFIX = {"author-agent": "AuthorAgent", "review-agent": "ReviewAgent"}
+_IDENT_MAX = 40
+_IDENT_RE = re.compile(r"[^A-Za-z0-9._+-]")
+_LABEL_RE = re.compile(r"[^A-Za-z0-9._+ -]")
+
+
+def _clean_ident(value):
+    """Sanitise an agent/model identifier (charset + length capped), or None."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise HttpError(400, "'agent'/'model' must be strings")
+    cleaned = _IDENT_RE.sub("", value).strip()[:_IDENT_MAX]
+    return cleaned or None
+
+
+def validate_role(role):
+    if role not in AUTHOR_ROLES:
+        raise HttpError(400, "'authorRole' must be one of: %s" % ", ".join(AUTHOR_ROLES))
+    return role
+
+
+def author_label(role, agent=None, model=None, explicit=None):
+    """Build the display label, e.g. 'Human' or 'ReviewAgent-copilot-opus-4.8'.
+
+    An explicit label (from the configured agent template) wins, sanitised.
+    """
+    if explicit:
+        if not isinstance(explicit, str):
+            raise HttpError(400, "'label' must be a string")
+        cleaned = _LABEL_RE.sub("", explicit).strip()[:80]
+        if cleaned:
+            return cleaned
+    if role == "human":
+        return "Human"
+    parts = [_ROLE_PREFIX.get(role, role)]
+    if agent:
+        parts.append(agent)
+    if model:
+        parts.append(model)
+    return "-".join(parts)
+
+
+def identity_fields(role, agent=None, model=None, label=None):
+    """Return the normalised identity dict stamped onto comments and replies."""
+    role = validate_role(role)
+    agent = _clean_ident(agent)
+    model = _clean_ident(model)
+    return {
+        "authorRole": role,
+        "agent": agent,
+        "model": model,
+        "authorLabel": author_label(role, agent, model, label),
+    }
+
+
+def resolve_identity(body, default_role):
+    """Derive an identity from a request body, defaulting + backward-compatible.
+
+    Accepts an explicit `authorRole` (+ optional agent/model/label). Falls back
+    to the legacy free `author` field ("human" / "agent") so old clients and the
+    shell keep working, then to `default_role`.
+    """
+    role = body.get("authorRole")
+    if not role:
+        legacy = body.get("author")
+        if legacy == "human":
+            role = "human"
+        elif legacy == "agent":
+            role = "author-agent"
+        else:
+            role = default_role
+    return identity_fields(role, body.get("agent"), body.get("model"),
+                           body.get("label"))
 
 
 class CommentStore:
@@ -79,10 +159,13 @@ class FileCommentStore(CommentStore):
             json.dump(comment, fh, indent=2)
         os.replace(tmp, path)
 
+    # Bookkeeping files that share the comments folder but are NOT comments.
+    _RESERVED = frozenset(("meta.json",))
+
     def list(self):
         out = []
         for name in os.listdir(self.directory):
-            if not name.endswith(".json"):
+            if not name.endswith(".json") or name in self._RESERVED:
                 continue
             try:
                 with open(os.path.join(self.directory, name), "r", encoding="utf-8") as fh:
@@ -306,6 +389,7 @@ def make_comment(cfg: Config, body):
     author = body.get("author")
     if author is not None and not isinstance(author, str):
         raise HttpError(400, "'author' must be a string")
+    ident = resolve_identity(body, default_role="human")
     return {
         "id": time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8],
         "path": path,
@@ -313,7 +397,11 @@ def make_comment(cfg: Config, body):
         "side": side,
         "range": rng,
         "text": text,
-        "author": author,
+        "author": ident["authorLabel"],
+        "authorRole": ident["authorRole"],
+        "agent": ident["agent"],
+        "model": ident["model"],
+        "authorLabel": ident["authorLabel"],
         "createdAt": now_iso(),
         "status": DEFAULT_STATUS,
         "replies": [],
@@ -323,22 +411,33 @@ def make_comment(cfg: Config, body):
 def make_reply(body):
     """Validate and build a reply to attach to a comment thread.
 
-    A reply records who spoke (`human` / `agent`), the text, and a timestamp.
-    `make_reply` does not change the parent comment's status — that is a
-    separate, explicit action (PATCH /api/comments?id=…) so the lifecycle stays
-    auditable.
+    A reply records who spoke (role + agent/model identity), the text, and a
+    timestamp. The legacy `author` field ("human" / "agent") is kept for
+    backward compatibility (old shells/scripts). `make_reply` does not change the
+    parent comment's status — that is a separate, explicit action
+    (PATCH /api/comments?id=…) so the lifecycle stays auditable.
     """
     if not isinstance(body, dict):
         raise HttpError(400, "body must be a JSON object")
     text = body.get("text")
     if not text or not isinstance(text, str) or not text.strip():
         raise HttpError(400, "reply requires non-empty 'text'")
-    author = body.get("author")
-    if author not in REPLY_AUTHORS:
-        raise HttpError(400, "reply 'author' must be one of: %s" % ", ".join(REPLY_AUTHORS))
+    role = body.get("authorRole")
+    if not role:
+        author = body.get("author")
+        if author not in REPLY_AUTHORS:
+            raise HttpError(400, "reply 'author' must be one of: %s" % ", ".join(REPLY_AUTHORS))
+        role = "human" if author == "human" else "author-agent"
+    ident = identity_fields(role, body.get("agent"), body.get("model"),
+                            body.get("label"))
+    legacy = "human" if ident["authorRole"] == "human" else "agent"
     return {
         "id": time.strftime("%Y%m%dT%H%M%S") + "-" + uuid.uuid4().hex[:8],
-        "author": author,
+        "author": legacy,
+        "authorRole": ident["authorRole"],
+        "agent": ident["agent"],
+        "model": ident["model"],
+        "authorLabel": ident["authorLabel"],
         "text": text,
         "createdAt": now_iso(),
     }

@@ -22,6 +22,7 @@ import {
   submitComment, commentsForPath, renderCommentPanel, updateAnchorLabel
 } from "./js/comments.js";
 import { loadCheckers, runChecks } from "./js/checks.js";
+import { initCrossReview } from "./js/crossreview.js";
 
 // ---- connection / manifest -------------------------------------------
 async function loadManifest() {
@@ -88,5 +89,7 @@ $("checks-toggle").addEventListener("click", function (ev) {
 document.addEventListener("click", function (ev) {
   if (!$("checks").contains(ev.target)) $("checks-menu").hidden = true;
 });
+
+initCrossReview();
 
 loadManifest();

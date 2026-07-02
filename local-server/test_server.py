@@ -226,7 +226,302 @@ class ReplyValidationTests(unittest.TestCase):
 
 
 # ---------------------------------------------------------------------------
-class OriginPolicyTests(unittest.TestCase):
+class AuthorIdentityTests(unittest.TestCase):
+    def setUp(self):
+        self.cfg = make_cfg(tempfile.mkdtemp(prefix="ar-id-"))
+
+    def test_comment_defaults_to_human(self):
+        c = server.make_comment(self.cfg, {"path": "a.txt", "text": "hi"})
+        self.assertEqual(c["authorRole"], "human")
+        self.assertEqual(c["authorLabel"], "Human")
+        self.assertIsNone(c["agent"])
+
+    def test_comment_review_agent_label(self):
+        c = server.make_comment(self.cfg, {
+            "path": "a.txt", "text": "bug", "authorRole": "review-agent",
+            "agent": "copilot", "model": "opus-4.8"})
+        self.assertEqual(c["authorRole"], "review-agent")
+        self.assertEqual(c["authorLabel"], "ReviewAgent-copilot-opus-4.8")
+
+    def test_comment_legacy_agent_maps_to_author_agent(self):
+        c = server.make_comment(self.cfg, {"path": "a.txt", "text": "x",
+                                           "author": "agent"})
+        self.assertEqual(c["authorRole"], "author-agent")
+
+    def test_comment_rejects_bad_role(self):
+        with self.assertRaises(server.HttpError):
+            server.make_comment(self.cfg, {"path": "a.txt", "text": "x",
+                                           "authorRole": "boss"})
+
+    def test_explicit_label_wins(self):
+        c = server.make_comment(self.cfg, {
+            "path": "a.txt", "text": "x", "authorRole": "review-agent",
+            "label": "ReviewAgent-Copilot-GPT5"})
+        self.assertEqual(c["authorLabel"], "ReviewAgent-Copilot-GPT5")
+
+    def test_reply_keeps_legacy_author_and_adds_role(self):
+        r = server.make_reply({"authorRole": "review-agent", "agent": "copilot",
+                               "model": "gpt-5", "text": "looks fine"})
+        self.assertEqual(r["author"], "agent")          # backward-compat field
+        self.assertEqual(r["authorRole"], "review-agent")
+        self.assertEqual(r["authorLabel"], "ReviewAgent-copilot-gpt-5")
+
+    def test_reply_human(self):
+        r = server.make_reply({"author": "human", "text": "thanks"})
+        self.assertEqual(r["author"], "human")
+        self.assertEqual(r["authorRole"], "human")
+
+
+# ---------------------------------------------------------------------------
+class AgentConfigTests(unittest.TestCase):
+    def setUp(self):
+        self.state = tempfile.mkdtemp(prefix="ar-state-")
+        self._old = os.environ.get("AR_STATE_DIR")
+        os.environ["AR_STATE_DIR"] = self.state
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("AR_STATE_DIR", None)
+        else:
+            os.environ["AR_STATE_DIR"] = self._old
+
+    def test_no_config_review_always_available(self):
+        # Review is now always available via built-in presets; author still
+        # reflects an optional config.json entry.
+        summ = server.agent_summary()
+        self.assertTrue(summ["agents"]["review"])
+        self.assertFalse(summ["agents"]["author"])
+        ids = [c["id"] for c in summ["reviewChoices"]]
+        self.assertIn("copilot", ids)
+        self.assertIn("opencode", ids)
+        self.assertIn("custom", ids)
+
+    def test_config_review_appears_as_choice(self):
+        with open(os.path.join(self.state, "config.json"), "w") as fh:
+            json.dump({"agents": {
+                "review": {"command": ["copilot", "-p", "{prompt}"],
+                           "agent": "copilot", "model": "opus-4.8"}}}, fh)
+        summ = server.agent_summary()
+        self.assertTrue(summ["agents"]["review"])
+        self.assertIn("config", [c["id"] for c in summ["reviewChoices"]])
+
+
+# ---------------------------------------------------------------------------
+class ReviewAgentSelectionTests(unittest.TestCase):
+    def setUp(self):
+        self.state = tempfile.mkdtemp(prefix="ar-state-")
+        self._old = os.environ.get("AR_STATE_DIR")
+        os.environ["AR_STATE_DIR"] = self.state
+        self.root = make_repo()
+        self.cfg = make_cfg(self.root)
+
+    def tearDown(self):
+        if self._old is None:
+            os.environ.pop("AR_STATE_DIR", None)
+        else:
+            os.environ["AR_STATE_DIR"] = self._old
+
+    def _stage_precommit(self):
+        os.makedirs(self.cfg.precommit_dir, exist_ok=True)
+        with open(os.path.join(self.cfg.precommit_dir, "commit-message.md"), "w") as fh:
+            fh.write("feat: the change\n")
+
+    def test_default_selection_is_copilot(self):
+        self.assertEqual(server.selected_review_agent(self.cfg), "copilot")
+
+    def test_save_setting_persists_and_reloads(self):
+        res = server.save_setting(self.cfg, {"reviewAgent": "opencode"})
+        self.assertEqual(res["reviewAgent"], "opencode")
+        self.assertTrue(os.path.isfile(server.setting_path(self.cfg)))
+        self.assertEqual(server.selected_review_agent(self.cfg), "opencode")
+        self.assertEqual(server.agent_summary(self.cfg)["reviewAgent"], "opencode")
+
+    def test_save_setting_rejects_unknown(self):
+        with self.assertRaises(server.HttpError) as e:
+            server.save_setting(self.cfg, {"reviewAgent": "rm-rf"})
+        self.assertEqual(e.exception.code, 400)
+
+    def test_invalid_saved_selection_falls_back(self):
+        with open(server.setting_path(self.cfg), "w") as fh:
+            json.dump({"reviewAgent": "gone"}, fh)
+        self.assertEqual(server.selected_review_agent(self.cfg), "copilot")
+
+    def test_custom_agent_returns_manual_prompt_no_spawn(self):
+        self._stage_precommit()
+        server.save_setting(self.cfg, {"reviewAgent": "custom"})
+        res = server.trigger_review(self.cfg)
+        self.assertEqual(res["status"], "manual")
+        self.assertIsNone(res["command"])
+        self.assertIn("CROSS-REVIEW", res["prompt"])
+        # no job/active marker was created
+        self.assertIsNone(server.active_job(self.cfg))
+
+    def test_selected_preset_command_is_used(self):
+        self._stage_precommit()
+        server.save_setting(self.cfg, {"reviewAgent": "opencode"})
+        spec = server._resolve_review_spec(self.cfg)
+        self.assertEqual(spec["id"], "opencode")
+        self.assertEqual(spec["command"][:2], ["opencode", "run"])
+
+    def test_model_choice_persists_per_agent(self):
+        server.save_setting(self.cfg, {"reviewAgent": "copilot"})
+        res = server.save_setting(self.cfg, {"agent": "copilot",
+                                             "reviewModel": "gpt-5.5"})
+        self.assertEqual(res["reviewModel"], "gpt-5.5")
+        self.assertEqual(server.selected_review_model(self.cfg, "copilot"), "gpt-5.5")
+        # a different agent keeps its own (empty) model
+        self.assertEqual(server.selected_review_model(self.cfg, "claude"), "")
+
+    def test_model_flag_appended_to_command(self):
+        server.save_setting(self.cfg, {"reviewAgent": "copilot",
+                                       "agent": "copilot", "reviewModel": "gpt-5.4"})
+        spec = server._resolve_review_spec(self.cfg)
+        self.assertIn("--model", spec["command"])
+        self.assertIn("gpt-5.4", spec["command"])
+        self.assertEqual(spec["model"], "gpt-5.4")
+
+    def test_unknown_model_rejected(self):
+        with self.assertRaises(server.HttpError) as e:
+            server.save_setting(self.cfg, {"agent": "copilot",
+                                           "reviewModel": "evil; rm -rf"})
+        self.assertEqual(e.exception.code, 400)
+
+    def test_agent_summary_exposes_models(self):
+        summary = server.agent_summary(self.cfg)
+        by_id = {c["id"]: c for c in summary["reviewChoices"]}
+        self.assertIn("gpt-5.5", by_id["copilot"]["models"])
+        self.assertEqual(by_id["opencode"]["models"], [])
+        self.assertIn("reviewModel", summary)
+
+    def test_clearing_model_falls_back_to_default(self):
+        server.save_setting(self.cfg, {"agent": "copilot", "reviewModel": "gpt-5.5"})
+        server.save_setting(self.cfg, {"agent": "copilot", "reviewModel": ""})
+        self.assertEqual(server.selected_review_model(self.cfg, "copilot"), "")
+        spec = server._resolve_review_spec(self.cfg)
+        self.assertNotIn("--model", spec["command"])
+
+
+# ---------------------------------------------------------------------------
+class TaskAndCommitTests(unittest.TestCase):
+    def setUp(self):
+        self.root = make_repo()
+        self.cfg = make_cfg(self.root)
+
+    def test_drop_task_writes_file(self):
+        res = server.drop_task(self.cfg, {"action": "address-all"})
+        self.assertEqual(res["action"], "address-all")
+        path = os.path.join(self.cfg.work_dir, "tasks", res["taskId"] + ".json")
+        self.assertTrue(os.path.isfile(path))
+
+    def test_drop_task_rejects_unknown_action(self):
+        with self.assertRaises(server.HttpError):
+            server.drop_task(self.cfg, {"action": "rm-rf"})
+
+    def test_drop_task_blocked_while_job_active(self):
+        # Simulate an in-flight job owned by THIS (alive) process.
+        jobs = os.path.join(self.cfg.work_dir, "jobs")
+        os.makedirs(jobs, exist_ok=True)
+        with open(os.path.join(jobs, "active.json"), "w") as fh:
+            json.dump({"kind": "review", "pid": os.getpid(), "jobId": "x"}, fh)
+        with self.assertRaises(server.HttpError) as e:
+            server.drop_task(self.cfg, {"action": "address-all"})
+        self.assertEqual(e.exception.code, 409)
+
+    def test_read_job_returns_command_and_log(self):
+        jobs = os.path.join(self.cfg.work_dir, "jobs")
+        os.makedirs(jobs, exist_ok=True)
+        jid = "20260101T000000-deadbeef"
+        with open(os.path.join(jobs, jid + ".json"), "w") as fh:
+            json.dump({"jobId": jid, "pid": 1, "command": ["copilot", "-p", "x"],
+                       "prompt": "review this"}, fh)
+        with open(os.path.join(jobs, jid + ".log"), "w") as fh:
+            fh.write("reviewing...\nfiled 2 comments\n")
+        job = server.read_job(self.cfg, jid)
+        self.assertEqual(job["command"], ["copilot", "-p", "x"])
+        self.assertIn("filed 2 comments", job["log"])
+        self.assertIn(job["status"], ("running", "done"))
+
+    def test_read_job_unknown(self):
+        with self.assertRaises(server.HttpError):
+            server.read_job(self.cfg, "nope")
+
+    def test_commit_uses_precommit_message(self):
+        os.makedirs(self.cfg.precommit_dir, exist_ok=True)
+        with open(os.path.join(self.cfg.precommit_dir, "commit-message.md"), "w") as fh:
+            fh.write("feat: the change\n")
+        res = server.do_commit(self.cfg, {"addAll": True, "requireResolved": False},
+                               open_count=0)
+        self.assertEqual(res["status"], "ok")
+        self.assertTrue(res["sha"])
+        log = subprocess.run(["git", "-C", self.root, "log", "-1", "--pretty=%s"],
+                             capture_output=True, text=True)
+        self.assertIn("feat: the change", log.stdout)
+
+    def test_commit_blocked_by_open_comments(self):
+        with self.assertRaises(server.HttpError) as e:
+            server.do_commit(self.cfg, {"addAll": True}, open_count=3)
+        self.assertEqual(e.exception.code, 409)
+
+    def test_commit_explicit_message(self):
+        res = server.do_commit(self.cfg, {"addAll": True, "requireResolved": False,
+                                          "message": "chore: inline msg"}, open_count=0)
+        self.assertEqual(res["status"], "ok")
+
+    def test_review_requires_precommit(self):
+        state = tempfile.mkdtemp(prefix="ar-state-")
+        old = os.environ.get("AR_STATE_DIR")
+        os.environ["AR_STATE_DIR"] = state
+        try:
+            with open(os.path.join(state, "config.json"), "w") as fh:
+                json.dump({"agents": {"review": {
+                    "command": ["python", "-c", "pass"], "agent": "x", "model": "y"}}}, fh)
+            # No precommit message staged -> refuse (before any spawn).
+            with self.assertRaises(server.HttpError) as e:
+                server.trigger_review(self.cfg)
+            self.assertEqual(e.exception.code, 400)
+            self.assertIn("commit message", e.exception.message)
+        finally:
+            if old is None:
+                os.environ.pop("AR_STATE_DIR", None)
+            else:
+                os.environ["AR_STATE_DIR"] = old
+
+
+# ---------------------------------------------------------------------------
+class AddressTaskMarkerTests(unittest.TestCase):
+    """The author's next-task.py claim/done should set/clear the single active-job
+    marker so a racing commit or cross-review is blocked while it addresses."""
+
+    def setUp(self):
+        self.state = tempfile.mkdtemp(prefix="ar-nt-state-")
+        self.root = make_repo()
+        self.cfg = make_cfg(self.root)
+        with open(os.path.join(self.state, "session.json"), "w") as fh:
+            json.dump({"workDir": self.cfg.work_dir, "authorPid": os.getpid()}, fh)
+        self.scripts = server.scripts_dir()
+
+    def _run(self, *args):
+        env = dict(os.environ, AR_STATE_DIR=self.state)
+        return subprocess.run(
+            [sys.executable, os.path.join(self.scripts, "next-task.py"), *args],
+            capture_output=True, text=True, env=env)
+
+    def test_claim_sets_and_done_clears_active_marker(self):
+        res = server.drop_task(self.cfg, {"action": "address-all"})
+        tid = res["taskId"]
+        # Claim it -> active marker written; guard now blocks a racing job.
+        r = self._run()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        busy = server.active_job(self.cfg)
+        self.assertIsNotNone(busy)
+        self.assertEqual(busy["kind"], "address-all")
+        with self.assertRaises(server.HttpError) as e:
+            server.drop_task(self.cfg, {"action": "address-all"})
+        self.assertEqual(e.exception.code, 409)
+        # Finishing clears the marker so work can flow again.
+        r2 = self._run("--done", tid)
+        self.assertEqual(r2.returncode, 0, r2.stderr)
+        self.assertIsNone(server.active_job(self.cfg))
     def _allowed(self, cfg, origin):
         h = server.Handler.__new__(server.Handler)
         h.cfg = cfg
@@ -632,6 +927,49 @@ class EndToEndHttpTests(unittest.TestCase):
             self.get("/does-not-exist", token=None)
         self.assertEqual(e.exception.code, 404)
 
+    def test_agents_endpoint_shape(self):
+        st, data = self.get("/api/agents")
+        self.assertEqual(st, 200)
+        self.assertIn("review", data["agents"])
+        self.assertIn("author", data["agents"])
+        self.assertIsInstance(data["agents"]["review"], bool)
+        self.assertIn("configPath", data)
+        # new: selectable review-agent picker
+        self.assertIn("reviewAgent", data)
+        ids = [c["id"] for c in data["reviewChoices"]]
+        self.assertIn("opencode", ids)
+        self.assertIn("custom", ids)
+
+    def test_post_without_body_read_keeps_keepalive_intact(self):
+        # Regression: a POST handler that doesn't read its body must not leave
+        # the body in the socket, or it bleeds into the NEXT keep-alive request
+        # (method "{}GET" -> HTTP 501). Reuse ONE connection for POST then GET.
+        import http.client
+        conn = http.client.HTTPConnection("127.0.0.1", self.port)
+        try:
+            conn.request("POST", "/api/agent/review", body=b"{}",
+                         headers={"Content-Type": "application/json",
+                                  "X-AR-Token": "secret"})
+            r1 = conn.getresponse(); r1.read()   # 400 (no precommit) is fine
+            conn.request("GET", "/api/manifest", headers={"X-AR-Token": "secret"})
+            r2 = conn.getresponse(); r2.read()
+            self.assertEqual(r2.status, 200)     # was 501 before the drain fix
+        finally:
+            conn.close()
+
+    def test_task_drop_endpoint(self):
+        st, data = self.post("/api/task", {"action": "address-all"})
+        self.assertEqual(st, 200)
+        self.assertIn("taskId", data)
+        path = os.path.join(self.cfg.work_dir, "tasks", data["taskId"] + ".json")
+        self.assertTrue(os.path.isfile(path))
+
+    def test_task_drop_rejects_bad_action(self):
+        with self.assertRaises(urllib.error.HTTPError) as e:
+            self.post("/api/task", {"action": "danger"})
+        self.assertEqual(e.exception.code, 400)
+
+
 CHECKERS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "checkers")
 
 
@@ -780,6 +1118,58 @@ class StaticTokenInjectionTests(unittest.TestCase):
     def test_index_html_has_no_token_meta(self):
         body = self._raw("/")
         self.assertNotIn("ar-token", body)
+
+
+class SessionStorageTests(unittest.TestCase):
+    """Per-repo persistent comment folder keying (scripts/common.py)."""
+
+    @classmethod
+    def setUpClass(cls):
+        scripts = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "skills", "agentic-review", "scripts"))
+        sys.path.insert(0, scripts)
+        import common as ar_common  # noqa: E402
+        cls.C = ar_common
+
+    def test_session_key_is_stable_for_same_path(self):
+        k1 = self.C.session_key("/some/repo/path")
+        k2 = self.C.session_key("/some/repo/path")
+        self.assertEqual(k1, k2)
+
+    def test_session_key_differs_for_different_paths(self):
+        a = self.C.session_key("/repo/one")
+        b = self.C.session_key("/repo/two")
+        self.assertNotEqual(a, b)
+
+    def test_session_key_distinguishes_same_basename(self):
+        # Two different repos that share a basename must not collide.
+        a = self.C.session_key("/home/alice/proj")
+        b = self.C.session_key("/home/bob/proj")
+        self.assertNotEqual(a, b)
+
+    def test_session_key_is_filesystem_safe(self):
+        k = self.C.session_key("/weird/name with spaces & symbols!")
+        self.assertTrue(all(c.isalnum() or c in "._-" for c in k), k)
+
+    def test_session_dir_is_under_comments_root(self):
+        d = self.C.session_dir("/some/repo")
+        self.assertEqual(os.path.dirname(d), self.C.COMMENTS_ROOT)
+
+
+class MetaJsonIgnoredTests(unittest.TestCase):
+    """A meta.json sharing the comments folder must not read as a comment."""
+
+    def test_meta_json_is_not_a_comment(self):
+        d = tempfile.mkdtemp(prefix="ar-meta-")
+        store = server.FileCommentStore(d)
+        with open(os.path.join(d, "meta.json"), "w", encoding="utf-8") as fh:
+            json.dump({"repoRoot": "/x", "branch": "main"}, fh)
+        self.assertEqual(store.list(), [])
+        store.save({"id": "c1", "path": "a.py", "line": 1, "text": "hi",
+                    "createdAt": "2026-01-01T00:00:00Z"})
+        got = store.list()
+        self.assertEqual(len(got), 1)
+        self.assertEqual(got[0]["id"], "c1")
 
 
 if __name__ == "__main__":

@@ -141,6 +141,48 @@ and the agent take turns on it instead of the comment being a one-way note.
   per-comment status chip that doubles as the human's status selector, and a
   reply box. See `site/js/comments.js` + `site/styles.css`.
 
+### 7. Session-level automated check suite (specify at launch, show status per review)
+Reviewer wants to declare **which automated checks to run** when starting a
+session (e.g. `build`, `ut`/unit tests, `code analysis`, lint), have the bridge
+run them, and surface each check's **execution result on every review** — plus a
+clear top-level indicator of **whether and when all the automated checks have
+run** (and passed/failed).
+
+- **Specify at launch.** Let `launch` (or a config file / env, e.g.
+  `AR_CHECKS=build,ut,analyze` or a `checks:` list in the user-level config) name
+  the check suite for the session. Each named check maps to a repo-scoped command
+  (reuse the deferred `scope:"repo"` checker contract from item 4 — run once for
+  the whole repo, no stdin, receives the repo root + changed paths).
+- **Run + record results.** The bridge runs the suite (on demand and/or after a
+  change), persisting each check's status (`pending`/`running`/`pass`/`fail`),
+  exit summary, duration, and the commit/diff it ran against.
+- **Show on every review.** The shell renders a **check-status banner** (e.g.
+  "3/3 checks passed · build ✓ ut ✓ analyze ✓ · ran 2m ago against <sha>") visible
+  on each file/review, so the human sees at a glance if all automated checks have
+  executed and whether they're green — and is warned when results are stale
+  (the working tree changed since the checks last ran).
+- Builds on item 4 (repo-scoped checkers, findings→comments); the new part is the
+  **session-declared suite** + the **always-visible run/status summary**.
+
+### 8. Surface cross-review task claim/progress in the shell
+Today when the human clicks **Address all**, the portal only shows the "task
+queued" POST response. The author agent's poll (`next-task.py`) already flips the
+task file to `status:"in-progress"` + `claimedAt` (and the file is removed on
+`--done`), so the state exists on disk — the shell just doesn't read it. Reviewer
+couldn't tell whether the agent had picked up the task.
+
+- **Expose task state.** Add `GET /api/task` (latest task: `pending` /
+  `in-progress` / done-absent, plus `createdAt`/`claimedAt`). State stays in the
+  task file; the endpoint only lets the browser read it.
+- **Show a banner.** In the shell, render an "Address all" status chip:
+  `queued -> agent working (claimed 12s ago) -> done`, and clear it when the task
+  file is gone. Poll it alongside the existing comment refresh.
+- **Also persist comments by default across restarts.** Loading a server-side
+  code fix needs a bridge restart, which currently **deletes temp comments** on
+  relaunch (`commentsIsTemp`). Either warn loudly, or make `launch` default to a
+  persistent (git-ignored) comments folder so a restart never drops the human's
+  in-flight review. (Lost a live review this way during testing.)
+
 ## Smaller follow-ups
 
 - Comment edit currently only edits text; consider re-anchoring (move a comment to

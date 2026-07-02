@@ -7,7 +7,7 @@ gives you a fast **local** loop to read, comment on, and feed changes back to th
 agent before it continues.
 
 > **Status:** working. Bridge server, review shell, and the three skill commands
-> are implemented and tested. See **[design.md](./design.md)** for the full
+> are implemented and tested. See **[design.md](./docs/design.md)** for the full
 > architecture, security model, and open questions.
 
 ## How it works
@@ -220,7 +220,7 @@ call, use the same-origin option above.
 
 ## Documentation
 
-- **[design.md](./design.md)** — architecture, security model, supported content,
+- **[design.md](./docs/design.md)** — architecture, security model, supported content,
   comment schema, and the browser-compatibility analysis.
-- **[next-step.md](./next-step.md)** — remaining ideas and backlog.
+- **[next-step.md](./docs/next-step.md)** — remaining ideas and backlog.
 

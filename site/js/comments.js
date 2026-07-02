@@ -50,6 +50,27 @@ function anchorText(cm) {
 var STATUSES = ["open", "needs-discussion", "resolved", "rejected", "wont-fix"];
 function commentStatus(cm) { return cm.status || "open"; }
 
+// Author identity helpers. Every comment/reply now records WHO spoke: a role
+// (human / author-agent / review-agent), the agent + model, and a display label.
+function authorRoleOf(c) {
+  if (c.authorRole) return c.authorRole;
+  // Backward-compat: old comments use a free `author`; replies use human|agent.
+  if (c.author === "agent") return "author-agent";
+  return "human";
+}
+function authorLabelOf(c) {
+  if (c.authorLabel) return c.authorLabel;
+  var role = authorRoleOf(c);
+  if (role === "review-agent") return "ReviewAgent";
+  if (role === "author-agent") return "AuthorAgent";
+  return "Human";
+}
+// A compact identity chip, styled by role so the three voices read distinctly.
+function authorChip(c) {
+  var role = authorRoleOf(c);
+  return el("span", "c-author role-" + role, authorLabelOf(c));
+}
+
 // Build an inline thread element for a list of comments.
 export function buildThread(comments) {
   var box = el("div", "thread");
@@ -66,6 +87,7 @@ function commentItem(cm, cls) {
   var anchorSpan = el("span", "c-anchor", anchorText(cm) + (cm.side ? " " + cm.side : ""));
   anchorSpan.addEventListener("click", function () { jumpToLine(cm); });
   meta.appendChild(anchorSpan);
+  meta.appendChild(authorChip(cm));
   meta.appendChild(statusChip(cm));
   meta.appendChild(el("span", "", fmtTime(cm.createdAt) + (cm.updatedAt ? " (edited)" : "")));
   var actions = el("span", "c-actions");
@@ -106,14 +128,15 @@ function statusChip(cm) {
   return sel;
 }
 
-// Render the back-and-forth replies, distinguishing human vs agent visually.
+// Render the back-and-forth replies, distinguishing the voices visually.
 function buildReplies(replies) {
   var wrap = el("div", "c-replies");
   replies.forEach(function (r) {
-    var who = r.author === "agent" ? "agent" : "human";
+    var role = authorRoleOf(r);
+    var who = role === "human" ? "human" : "agent";
     var row = el("div", "c-reply reply-" + who);
     var head = el("div", "c-reply-meta");
-    head.appendChild(el("span", "c-reply-who", who));
+    head.appendChild(el("span", "c-reply-who role-" + role, authorLabelOf(r)));
     head.appendChild(el("span", "", fmtTime(r.createdAt)));
     row.appendChild(head);
     row.appendChild(el("div", "c-text", r.text));
@@ -213,6 +236,36 @@ export async function refreshAfterCommentChange() {
     markActiveFile(state.current.path);
     await loadAndRender();
   }
+}
+
+// Light refresh used by background polling (cross-review / address-all): reload
+// the comment store and update the side panel + file-list / tree badges WITHOUT
+// re-rendering the open file. That keeps the reviewer's scroll position and file
+// selection intact (the old behaviour re-ran the heavy full refresh every tick,
+// which made the page appear to constantly "refresh"). Returns true when the
+// comment set actually changed, so callers can avoid needless work.
+export async function refreshCommentsOnly() {
+  var sig = commentSignature();
+  await loadAllComments();
+  var changed = commentSignature() !== sig;
+  if (changed) {
+    if (state.current) {
+      state.comments = commentsForPath(state.current.path);
+      renderCommentPanel();
+    }
+    renderFileList();
+    updateTreeCommentDots();
+    if (state.current) markActiveFile(state.current.path);
+  }
+  return changed;
+}
+
+// A cheap fingerprint of the comment store (count + ids + statuses) so we only
+// re-render when something meaningful changed.
+function commentSignature() {
+  return (state.allComments || []).map(function (c) {
+    return c.id + ":" + (c.status || "open") + ":" + ((c.replies || []).length);
+  }).sort().join("|");
 }
 
 // Toggle the has-comments dot on existing tree rows without rebuilding the

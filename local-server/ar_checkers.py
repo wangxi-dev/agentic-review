@@ -27,6 +27,7 @@ def _describe_checker(path):
     try:
         proc = subprocess.run(_checker_command(path) + ["--describe"],
                               capture_output=True, text=True, timeout=CHECKER_TIMEOUT,
+                              encoding="utf-8", errors="replace",
                               creationflags=NO_WINDOW)
     except (OSError, subprocess.SubprocessError):
         return {}
@@ -81,6 +82,7 @@ def _run_one_checker(checker, rel, content):
         proc = subprocess.run(
             _checker_command(checker["_path"]) + [rel],
             input=content, capture_output=True, text=True, timeout=CHECKER_TIMEOUT,
+            encoding="utf-8", errors="replace",
             creationflags=NO_WINDOW)
     except subprocess.TimeoutExpired:
         entry["error"] = "checker timed out after %ds" % CHECKER_TIMEOUT

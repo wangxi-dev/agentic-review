@@ -358,6 +358,78 @@ button.c-act.c-del:hover { color: var(--deleted); border-color: var(--deleted); 
 .status-rejected > .c-meta > .c-anchor,
 .status-wont-fix > .c-meta > .c-anchor { opacity: 0.7; }
 
+/* ---- author identity chips (human / author-agent / review-agent) ---- */
+.c-author {
+  font-weight: 600; font-size: 0.62rem; padding: 0 0.35rem; border-radius: 4px;
+  font-family: ui-monospace, monospace; white-space: nowrap;
+}
+.c-author.role-human, .c-reply-who.role-human { color: #0b5cad; background: #d8e6ff; }
+.c-author.role-author-agent, .c-reply-who.role-author-agent { color: #5b4fd0; background: #e2defb; }
+.c-author.role-review-agent, .c-reply-who.role-review-agent { color: #9a4f00; background: #ffe6c7; }
+/* role chips carry mixed-case identifiers, so don't uppercase them */
+.c-reply-who.role-human, .c-reply-who.role-author-agent, .c-reply-who.role-review-agent {
+  text-transform: none; letter-spacing: 0; font-family: ui-monospace, monospace;
+}
+
+/* ---- cross-review topbar controls ---- */
+.xr { display: flex; align-items: center; gap: 0.35rem; }
+.xr button {
+  font-size: 0.78rem; padding: 0.25rem 0.55rem; border-radius: 6px;
+}
+#xr-commit { border-color: var(--added); color: #1a7f37; }
+#xr-commit:hover:not(:disabled) { background: #eaf6ec; }
+.xr button:disabled { opacity: 0.45; cursor: not-allowed; }
+#xr-agent {
+  font-size: 0.78rem; padding: 0.22rem 0.4rem; border-radius: 6px;
+  border: 1px solid var(--border, #d0d7de); background: #fff; max-width: 12rem;
+}
+#xr-model {
+  font-size: 0.78rem; padding: 0.22rem 0.4rem; border-radius: 6px;
+  border: 1px solid var(--border, #d0d7de); background: #fff; max-width: 9rem;
+}
+#xr-model[hidden] { display: none; }
+/* Reopenable progress pill in the topbar: reflects the background job state. */
+.xr-job {
+  display: inline-flex; align-items: center; gap: 0.3rem;
+  font-size: 0.78rem; padding: 0.25rem 0.55rem; border-radius: 6px;
+  border: 1px solid var(--border, #d0d7de); background: #fff; cursor: pointer;
+}
+.xr-job[hidden] { display: none; }
+.xr-job #xr-job-icon { font-size: 0.85rem; line-height: 1; }
+.xr-job.state-running { border-color: #d29922; color: #9a6700; }
+.xr-job.state-running #xr-job-icon { color: #d29922; animation: xr-pulse 1.1s ease-in-out infinite; }
+.xr-job.state-done { border-color: var(--added); color: #1a7f37; }
+.xr-job.state-done #xr-job-icon { color: #1a7f37; }
+.xr-job.state-error { border-color: var(--deleted); color: #b42318; }
+.xr-job.state-error #xr-job-icon { color: #b42318; }
+@keyframes xr-pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.35; } }
+.xr-status { color: var(--muted); max-width: 22rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.xr-status.err { color: var(--deleted); }
+.xr-hint { color: var(--muted); white-space: nowrap; }
+
+/* ---- cross-review progress modal ---- */
+.xr-modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.45);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+}
+.xr-modal {
+  background: #fff; border-radius: 10px; width: min(860px, 92vw);
+  max-height: 86vh; display: flex; flex-direction: column;
+  padding: 1rem 1.1rem; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+}
+.xr-modal-head { display: flex; align-items: center; gap: 0.6rem; margin-bottom: 0.6rem; }
+.xr-modal-label { font-size: 0.72rem; font-weight: 600; color: var(--muted); margin: 0.5rem 0 0.2rem; text-transform: uppercase; letter-spacing: 0.04em; }
+.xr-modal-cmd, .xr-modal-prompt pre, .xr-modal-log {
+  font-family: ui-monospace, monospace; font-size: 0.78rem;
+  background: #0d1117; color: #d6deeb; border-radius: 6px; padding: 0.55rem 0.7rem;
+  white-space: pre-wrap; word-break: break-word; margin: 0;
+}
+.xr-modal-cmd { color: #9ece6a; }
+.xr-modal-prompt { margin: 0.4rem 0; }
+.xr-modal-prompt summary { cursor: pointer; font-size: 0.78rem; color: var(--accent); }
+.xr-modal-prompt pre { margin-top: 0.4rem; max-height: 12rem; overflow: auto; }
+.xr-modal-log { flex: 1; overflow: auto; min-height: 12rem; max-height: 46vh; }
+
 /* ---------------------------------------------------------------------------
    Doc pages (index.html landing, guideline.html) — reuse the design tokens
    above. These pages are plain documents, not the #layout review grid.

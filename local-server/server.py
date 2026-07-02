@@ -63,8 +63,15 @@ from ar_comments import (  # noqa: F401
     CommentStore, FileCommentStore, GitHubIssueCommentStore,
     make_store, make_comment, make_reply, validate_status,
     VALID_STATUSES, REPLY_AUTHORS, DEFAULT_STATUS, _gh_render, _gh_parse,
+    AUTHOR_ROLES, identity_fields, resolve_identity, author_label, validate_role,
 )
 from ar_http import Handler, _inject_token  # noqa: F401
+from ar_agents import (  # noqa: F401
+    agent_summary, trigger_review, drop_task, do_commit, read_job, load_agents,
+    save_setting, selected_review_agent, selected_review_model, setting_path,
+    active_job, _resolve_review_spec, REVIEW_PRESETS, _agent_models,
+    config_path, scripts_dir,
+)
 
 
 def parse_args(argv):
@@ -78,6 +85,8 @@ def parse_args(argv):
                    help="directory to store comment JSON files (default: <work-dir>/comments)")
     p.add_argument("--work-dir", default=os.environ.get("AR_WORK_DIR"),
                    help="in-repo git-ignored work folder (default: <root>/.agentic-review)")
+    p.add_argument("--precommit-dir", default=os.environ.get("AR_PRECOMMIT_DIR"),
+                   help="directory for the staged commit message (default: <work-dir>/precommit)")
     p.add_argument("--diff-base", default=os.environ.get("AR_DIFF_BASE", "HEAD"),
                    help="git ref to diff against (default: HEAD = working tree vs HEAD)")
     p.add_argument("--allow-origin", action="append",

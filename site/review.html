@@ -1,0 +1,98 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>agentic-review — review shell</title>
+
+  <!-- Syntax highlighting (highlight.js + line numbers plugin) -->
+  <link id="hljs-theme" rel="stylesheet"
+        href="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/styles/github.min.css" />
+  <script src="https://cdn.jsdelivr.net/gh/highlightjs/cdn-release@11.9.0/build/highlight.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/highlightjs-line-numbers.js@2.8.0/dist/highlightjs-line-numbers.min.js"></script>
+
+  <!-- Markdown -->
+  <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+  <!-- Sanitizer (markdown + html output) -->
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+  <!-- Mermaid diagrams (rendered in the markdown preview pane only, strict mode) -->
+  <script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+
+  <!-- Diff rendering -->
+  <link rel="stylesheet"
+        href="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/css/diff2html.min.css" />
+  <script src="https://cdn.jsdelivr.net/npm/diff2html@3.4.48/bundles/js/diff2html.min.js"></script>
+
+  <link rel="stylesheet" href="styles.css" />
+</head><body>
+  <header id="topbar">
+    <strong>agentic-review</strong>
+    <span id="conn" class="pill">connecting…</span>
+    <span id="repo" class="muted"></span>
+    <span class="spacer"></span>
+    <span id="xr" class="xr">
+      <select id="xr-agent" title="Which agent runs the cross-review"></select>
+      <select id="xr-model" title="Model the review agent runs on"></select>
+      <button id="xr-review" data-title="Spawn a brand-new reviewer agent to cross-review the diff">⇄ Cross-review</button>
+      <button id="xr-address" data-title="Hand all open comments to the already-running author agent to address (requires the author poll / next-task loop)">✎ Address all</button>
+      <button id="xr-commit" data-title="LGTM — commit the changes (works after open comments are resolved)">✓ LGTM → commit</button>
+      <button id="xr-job" class="xr-job" hidden title="Show the cross-review progress window"><span id="xr-job-icon">●</span> <span id="xr-job-label">review</span></button>
+      <span id="xr-status" class="xr-status small"></span>
+      <span id="xr-hint" class="xr-hint small muted">Address all needs the author poll running in the background.</span>
+    </span>
+    <a id="home-link" href="index.html" title="About &amp; docs">home</a>
+    <button id="reload" title="Reload manifest">↻ refresh</button>
+  </header>
+
+  <div id="layout">
+    <aside id="filelist" aria-label="Files">
+      <div class="panel-title">
+        <span class="seg" role="tablist">
+          <button id="tab-changed" class="seg-btn active" role="tab">Changed</button>
+          <button id="tab-all" class="seg-btn" role="tab">All files</button>
+        </span>
+      </div>
+      <ul id="files"></ul>
+      <div id="tree" hidden></div>
+    </aside>
+
+    <main id="viewer">
+      <div id="viewer-head">
+        <span id="cur-path" class="muted">Select a file</span>
+        <span class="spacer"></span>
+        <div id="checks">
+          <button id="run-checks" title="Run code checks on this file">▷ Run checks</button>
+          <button id="checks-toggle" class="caret" title="Choose checks">▾</button>
+          <div id="checks-menu" hidden></div>
+        </div>
+        <div id="modes" class="modes" role="tablist"></div>
+      </div>
+      <div id="content"><div class="empty">No file selected.</div></div>
+    </main>
+
+    <aside id="comments" aria-label="Comments">
+      <div class="panel-title">
+        Comments <span id="comment-count" class="pill">0</span>
+      </div>
+      <div id="selection-hint" class="muted small">
+        Tip: click a line number (in <b>full</b> or <b>diff</b> mode) or a block
+        (in <b>preview</b> mode) to anchor a comment. Shift-click a second line
+        for a range.
+      </div>
+      <form id="comment-form">
+        <div id="anchor-label" class="anchor muted">File-level comment</div>
+        <textarea id="comment-text" rows="3"
+                  placeholder="Leave a comment for the agent…"></textarea>
+        <div class="row">
+          <button type="submit" id="comment-submit">Comment</button>
+          <button type="button" id="comment-clear" class="ghost">clear anchor</button>
+        </div>
+        <div id="comment-status" class="small"></div>
+      </form>
+      <ul id="comment-list"></ul>
+    </aside>
+  </div>
+
+  <script type="module" src="app.js"></script>
+</body>
+</html>

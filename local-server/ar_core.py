@@ -138,7 +138,8 @@ class Config:
             self.work_dir = os.path.join(self.root, WORK_DIR_NAME)
         self.work_dir_is_default = not args.work_dir and not args.comments_dir
         ensure_work_dir(self.work_dir)
-        self.precommit_dir = os.path.join(self.work_dir, "precommit")
+        self.precommit_dir = getattr(args, "precommit_dir", None) \
+            or os.path.join(self.work_dir, "precommit")
         # Checker plugins: built-in (shipped) + user-provided (in the work dir).
         self.builtin_checkers_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "checkers")
