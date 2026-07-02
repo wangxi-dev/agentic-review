@@ -2,8 +2,10 @@
 
 Pure stdlib, cross-platform (Windows / macOS / Linux). No shell assumptions.
 """
+import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -18,6 +20,41 @@ SERVER = os.path.join(REPO_ROOT, "local-server", "server.py")
 STATE_DIR = os.environ.get("AR_STATE_DIR") or os.path.join(
     os.path.expanduser("~"), ".agentic-review")
 STATE_FILE = os.path.join(STATE_DIR, "session.json")
+
+# Persistent, user-level home for per-repo review comment folders. Comments live
+# OUTSIDE the repo (and outside temp dirs) so they survive a reviewer/bridge
+# restart and are only ever removed on an explicit prune ('cleanup --sessions').
+COMMENTS_ROOT = os.path.join(STATE_DIR, "comments")
+
+
+def session_key(repo_root):
+    """A stable, filesystem-safe key for a repo's review session.
+
+    Same repo path -> same key, so relaunching the bridge for that repo reuses
+    the same comment folder (comments are never lost on restart). Different repos
+    get distinct keys. Readable prefix + short hash of the real path for
+    uniqueness (two repos can share a basename).
+    """
+    real = os.path.realpath(repo_root)
+    base = os.path.basename(real.rstrip(os.sep)) or "repo"
+    slug = re.sub(r"[^A-Za-z0-9._-]", "-", base).strip("-.") or "repo"
+    digest = hashlib.sha1(real.encode("utf-8", "replace")).hexdigest()[:8]
+    return "%s-%s" % (slug[:40], digest)
+
+
+def session_dir(repo_root):
+    """Absolute path to the persistent comment folder for a repo."""
+    return os.path.join(COMMENTS_ROOT, session_key(repo_root))
+
+
+def list_session_dirs():
+    """All per-repo comment folders under COMMENTS_ROOT (may be empty)."""
+    try:
+        names = sorted(os.listdir(COMMENTS_ROOT))
+    except OSError:
+        return []
+    return [os.path.join(COMMENTS_ROOT, n) for n in names
+            if os.path.isdir(os.path.join(COMMENTS_ROOT, n))]
 
 
 def die(msg, code=1):
@@ -159,3 +196,15 @@ def git_toplevel(start=None):
     except (OSError, ValueError):
         pass
     return start or os.getcwd()
+
+
+def run_git(args, cwd=None):
+    """Run a git command in cwd and return stripped stdout ('' on failure)."""
+    try:
+        out = subprocess.run(["git", *args], capture_output=True, text=True,
+                             cwd=cwd or os.getcwd())
+        if out.returncode == 0:
+            return out.stdout.strip()
+    except (OSError, ValueError):
+        pass
+    return ""

@@ -30,6 +30,16 @@
     <span id="conn" class="pill">connecting…</span>
     <span id="repo" class="muted"></span>
     <span class="spacer"></span>
+    <span id="xr" class="xr">
+      <select id="xr-agent" title="Which agent runs the cross-review"></select>
+      <select id="xr-model" title="Model the review agent runs on"></select>
+      <button id="xr-review" data-title="Spawn a brand-new reviewer agent to cross-review the diff">⇄ Cross-review</button>
+      <button id="xr-address" data-title="Hand all open comments to the already-running author agent to address (requires the author poll / next-task loop)">✎ Address all</button>
+      <button id="xr-commit" data-title="LGTM — commit the changes (works after open comments are resolved)">✓ LGTM → commit</button>
+      <button id="xr-job" class="xr-job" hidden title="Show the cross-review progress window"><span id="xr-job-icon">●</span> <span id="xr-job-label">review</span></button>
+      <span id="xr-status" class="xr-status small"></span>
+      <span id="xr-hint" class="xr-hint small muted">Address all needs the author poll running in the background.</span>
+    </span>
     <a id="home-link" href="index.html" title="About &amp; docs">home</a>
     <button id="reload" title="Reload manifest">↻ refresh</button>
   </header>

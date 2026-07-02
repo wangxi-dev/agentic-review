@@ -17,6 +17,8 @@ from ar_manifest import build_manifest, build_file_tree, write_precommit
 from ar_content import read_content, read_diff
 from ar_checkers import discover_checkers, run_checkers, run_checkers_all
 from ar_comments import CommentStore, make_comment, make_reply, validate_status
+from ar_agents import (agent_summary, trigger_review, drop_task, do_commit,
+                       read_job, save_setting)
 
 
 def _inject_token(body, token):
@@ -120,6 +122,16 @@ class Handler(BaseHTTPRequestHandler):
         self._dispatch("DELETE")
 
     def _dispatch(self, method):
+        # Always consume the request body up front (cached), even for handlers
+        # that don't need it or for error paths. Otherwise an unread body bleeds
+        # into the NEXT request on the same keep-alive connection and corrupts
+        # its request line (e.g. a leftover "{}" turns "GET" into "{}GET" → 501).
+        self._body_cache = None
+        if method in ("POST", "PUT", "PATCH", "DELETE"):
+            try:
+                self._raw_body()
+            except Exception:  # noqa: BLE001 - never fail dispatch on drain
+                pass
         parsed = urlparse(self.path)
         path = parsed.path
         query = parse_qs(parsed.query)
@@ -215,15 +227,43 @@ class Handler(BaseHTTPRequestHandler):
             rel = write_precommit(cfg, body.get("message"),
                                   body.get("name") or "commit-message.md")
             self._send_json(200, {"status": "ok", "path": rel})
+        elif path == "/api/agents" and method == "GET":
+            self._send_json(200, agent_summary(cfg))
+        elif path == "/api/setting" and method == "POST":
+            self._send_json(200, save_setting(cfg, self._read_json_body() or {}))
+        elif path == "/api/agent/review" and method == "POST":
+            self._send_json(200, trigger_review(cfg))
+        elif path == "/api/job" and method == "GET":
+            self._send_json(200, read_job(cfg, (query.get("id") or [None])[0]))
+        elif path == "/api/task" and method == "POST":
+            self._send_json(200, drop_task(cfg, self._read_json_body() or {}))
+        elif path == "/api/commit" and method == "POST":
+            self._send_json(200, do_commit(cfg, self._read_json_body() or {},
+                                           self._open_comment_count()))
         elif path == "/api/cleanup" and method == "POST":
             self._send_json(200, {"status": "ok"})
             threading.Thread(target=self.server.shutdown, daemon=True).start()
         else:
             raise HttpError(404, "no such endpoint: %s %s" % (method, path))
 
-    def _read_json_body(self):
+    def _open_comment_count(self):
+        live = ("open", "needs-discussion")
+        return sum(1 for c in self.store.list()
+                   if (c.get("status") or "open") in live)
+
+    def _raw_body(self):
+        # Read the request body at most once per request and cache it (so both
+        # the up-front drain in _dispatch and a handler's _read_json_body see the
+        # same bytes). _dispatch resets the cache to None at the start of every
+        # request; here None means "not read yet" and b"" means "read, empty".
+        if getattr(self, "_body_cache", None) is not None:
+            return self._body_cache
         length = int(self.headers.get("Content-Length") or 0)
-        raw = self.rfile.read(length) if length else b""
+        self._body_cache = self.rfile.read(length) if length > 0 else b""
+        return self._body_cache
+
+    def _read_json_body(self):
+        raw = self._raw_body()
         if not raw:
             return None
         try:

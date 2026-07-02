@@ -19,6 +19,7 @@ Flags:
 Give at least one of --text or --status.
 """
 import argparse
+import os
 import sys
 
 import common as C
@@ -49,13 +50,27 @@ def main(argv=None):
 
     cid = args.id
     if text and text.strip():
-        C.api_post(state, "/api/comments/reply?id=" + _q(cid),
-                   {"author": "agent", "text": text.strip()})
+        body = {"author": "agent", "text": text.strip()}
+        _stamp_identity(body, default_role="author-agent")
+        C.api_post(state, "/api/comments/reply?id=" + _q(cid), body)
         print("Replied to %s." % cid)
     if args.status:
         C.api_send(state, "PATCH", "/api/comments?id=" + _q(cid),
                    {"status": args.status})
         print("Status of %s set to '%s'." % (cid, args.status))
+
+
+def _stamp_identity(body, default_role):
+    """Attach role/agent/model/label from the environment (if a spawned agent
+    set them); otherwise the bridge defaults the role to author-agent."""
+    role = os.environ.get("AR_ROLE")
+    if role:
+        body["authorRole"] = role
+    for env_key, field in (("AR_AGENT", "agent"), ("AR_MODEL", "model"),
+                           ("AR_LABEL", "label")):
+        val = os.environ.get(env_key)
+        if val:
+            body[field] = val
 
 
 def _q(value):

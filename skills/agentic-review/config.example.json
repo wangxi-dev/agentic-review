@@ -1,0 +1,11 @@
+{
+  "_comment": "OPTIONAL. Cross-review works out of the box with built-in presets (Copilot / Claude Code / opencode / Codex / bring-your-own), picked from the portal dropdown and stored per-repo in <repo>/.agentic-review/setting.json. Add a 'review' entry HERE only to override the command (extra flags, a pinned model, a different binary); it then shows up as an extra choice in the dropdown. Commands run as argument lists (no shell); {prompt} is the only substitution and is built by the bridge. Custom commands come ONLY from this user-level file, never from repo content.",
+  "agents": {
+    "review": {
+      "label": "ReviewAgent-Copilot-GPT5.5",
+      "command": ["copilot", "-p", "{prompt}", "--model", "gpt-5.5", "--allow-all-tools"],
+      "agent": "copilot",
+      "model": "gpt-5.5"
+    }
+  }
+}
