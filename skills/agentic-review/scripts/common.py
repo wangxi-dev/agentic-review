@@ -26,6 +26,14 @@ STATE_FILE = os.path.join(STATE_DIR, "session.json")
 # restart and are only ever removed on an explicit prune ('cleanup --sessions').
 COMMENTS_ROOT = os.path.join(STATE_DIR, "comments")
 
+# Loopback port allocation. Rather than every session starting its scan at the
+# same 8900 (which makes concurrent launches race for the exact same port),
+# each session prefers a port derived from its repo path inside this window, and
+# then scans the window for the first actually-free one. Different repos land in
+# different lanes; the same repo relaunches on the same lane (predictable URL).
+DEFAULT_PORT = 8900
+PORT_WINDOW = 200  # candidate ports: 8900..9099
+
 
 def session_key(repo_root):
     """A stable, filesystem-safe key for a repo's review session.
@@ -126,8 +134,30 @@ def ping(port, timeout=1.0):
         return False
 
 
-def find_free_port(start, span=50):
-    for p in range(start, start + span):
+def find_free_port(start, window=PORT_WINDOW, avoid=None, base=DEFAULT_PORT):
+    """First free loopback TCP port for a session server.
+
+    Candidates are the window ``[base, base+window)``. Scanning begins at
+    ``start`` (a repo-derived preferred port) and wraps around the window, so a
+    start near the top still reaches the lower ports. Ports in ``avoid`` are
+    skipped — launch.py passes ports a previous attempt already lost to a racing
+    session so the retry lands somewhere new.
+
+    The OS-level bind check rejects any port already held by *any* process on
+    the machine, including another live agentic-review session's server, so
+    concurrent sessions never share a port.
+    """
+    avoid = set(avoid or ())
+    window = max(1, window)
+    # An explicit AR_PORT outside the default window scans forward from itself.
+    if not (base <= start < base + window):
+        base, begin = start, 0
+    else:
+        begin = start - base
+    for i in range(window):
+        p = base + (begin + i) % window
+        if p in avoid:
+            continue
         s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         try:
             s.bind(("127.0.0.1", p))
@@ -136,7 +166,21 @@ def find_free_port(start, span=50):
             continue
         finally:
             s.close()
-    die("no free port in range %d-%d" % (start, start + span - 1))
+    die("no free port in range %d-%d" % (base, base + window - 1))
+
+
+def preferred_port(seed, base=DEFAULT_PORT, window=PORT_WINDOW):
+    """A stable, repo-derived starting port inside ``[base, base+window)``.
+
+    Hashing the real repo path spreads different repos/worktrees across the
+    window so simultaneous launches rarely pick the same port to begin with;
+    combined with find_free_port's scan + launch.py's retry, actual collisions
+    self-heal. The same repo always prefers the same port.
+    """
+    real = os.path.realpath(seed)
+    digest = hashlib.sha1(real.encode("utf-8", "replace")).digest()
+    offset = int.from_bytes(digest[:4], "big") % max(1, window)
+    return base + offset
 
 
 def python_exe():

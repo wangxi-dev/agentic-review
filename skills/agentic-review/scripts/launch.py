@@ -5,7 +5,8 @@ Start the local bridge server for the repo the user is currently in, with a
 per-session token, and print the shell URL(s) to open in a browser.
 
 Env overrides:
-  AR_PORT          starting port (default 8900; auto-advances if busy)
+  AR_PORT          starting port (default: derived from the repo path so
+                   concurrent sessions don't collide; auto-advances if busy)
   AR_DIFF_BASE     git ref to diff against (default HEAD = working tree vs HEAD)
   AR_PAGES_ORIGIN  GitHub Pages shell origin, e.g. https://you.github.io/agentic-review
   AR_REVIEW_ROOT   override the directory under review (default: current git root)
@@ -86,19 +87,14 @@ def main(argv=None):
     diff_base = os.environ.get("AR_DIFF_BASE", "HEAD")
     pages_origin = os.environ.get("AR_PAGES_ORIGIN", "").strip()
     token = secrets.token_urlsafe(24)
-    start_port = int(os.environ.get("AR_PORT", "8900"))
-    port = C.find_free_port(start_port)
+    # Prefer a repo-derived port so two sessions reviewing different repos at the
+    # same time don't both start at 8900 and fight over it. An explicit AR_PORT
+    # overrides this. Either way we scan for a free port and retry below.
+    env_port = os.environ.get("AR_PORT")
+    start_port = int(env_port) if env_port else C.preferred_port(review_root)
 
     os.makedirs(C.STATE_DIR, exist_ok=True)
-    log_path = os.path.join(C.STATE_DIR, "server-%d.log" % port)
 
-    server_args = [
-        C.python_exe(), C.SERVER,
-        "--root", review_root,
-        "--port", str(port),
-        "--diff-base", diff_base,
-        "--token", token,
-    ]
     if args.comments_folder:
         comments_dir = os.path.abspath(args.comments_folder)
         comments_is_temp = False
@@ -118,30 +114,60 @@ def main(argv=None):
     # folder is empty, move them over so nothing is lost on the upgrade.
     if not args.comments_folder:
         _migrate_legacy(os.path.join(work_dir, "comments"), comments_dir, ".json")
-    server_args += ["--comments-dir", comments_dir,
-                    "--precommit-dir", precommit_dir]
-    if pages_origin:
-        server_args += ["--allow-origin", pages_origin]
 
-    proc = C.spawn_detached(server_args, log_path)
+    def server_args_for(port):
+        a = [
+            C.python_exe(), C.SERVER,
+            "--root", review_root,
+            "--port", str(port),
+            "--diff-base", diff_base,
+            "--token", token,
+            "--comments-dir", comments_dir,
+            "--precommit-dir", precommit_dir,
+        ]
+        if pages_origin:
+            a += ["--allow-origin", pages_origin]
+        return a
 
-    # Wait for /ping.
-    ready = False
-    for _ in range(50):
-        if C.ping(port):
-            ready = True
+    # Pick a free port, launch, and confirm it came up. If the server exits
+    # during startup it almost certainly lost the port to another session that
+    # bound it between our free-port check and the server's own bind — so reap
+    # it and retry on the next free port instead of failing the whole launch.
+    proc = port = log_path = None
+    tried = set()
+    for _attempt in range(8):
+        port = C.find_free_port(start_port, avoid=tried)
+        tried.add(port)
+        log_path = os.path.join(C.STATE_DIR, "server-%d.log" % port)
+        proc = C.spawn_detached(server_args_for(port), log_path)
+
+        ready = exited = False
+        for _ in range(50):
+            if C.ping(port):
+                ready = True
+                break
+            if proc.poll() is not None:
+                exited = True
+                break
+            time.sleep(0.1)
+        if ready:
             break
-        if proc.poll() is not None:
-            sys.stderr.write("--- server log ---\n")
-            try:
-                with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
-                    sys.stderr.write(fh.read())
-            except OSError:
-                pass
-            C.die("server exited during startup.")
-        time.sleep(0.1)
-    if not ready:
-        C.die("server did not become ready; see %s" % log_path)
+
+        # Startup failed. Make sure the process is gone, then try another port.
+        if C.process_alive(proc.pid):
+            C.terminate(proc.pid)
+        proc = None
+        if not exited:
+            # It stalled rather than lost the port — retrying won't help.
+            C.die("server did not become ready; see %s" % log_path)
+    else:
+        sys.stderr.write("--- server log ---\n")
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="replace") as fh:
+                sys.stderr.write(fh.read())
+        except OSError:
+            pass
+        C.die("could not start the bridge on a free port after several tries.")
 
     # Record the AUTHOR agent (the process that ran launch) so the bridge knows
     # which already-running, idle agent to hand "address comments" tasks to.

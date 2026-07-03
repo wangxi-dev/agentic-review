@@ -51,8 +51,11 @@ python3 skills/agentic-review/scripts/launch.py [review-comments-folder]
   optional folder argument to override the location.
 - Default diff base is **working tree vs `HEAD`** (all uncommitted changes,
   including untracked files). Override with `AR_DIFF_BASE` (e.g. `main`).
-- Default starting port is `8900`; the script advances to the next free port if
-  it is busy.
+- Each session picks its **own loopback port** automatically: it prefers a
+  port derived from the repo path (so two sessions reviewing different repos at
+  once don't collide on `8900`), scans for the next free one if that is busy,
+  and retries on another port if it loses a race to a concurrent launch. Set
+  `AR_PORT` to force a specific starting port.
 - The same-origin shell needs **only the port** — open
   `http://127.0.0.1:<port>/review.html`. The bridge injects the session token
   into that page, so there is no `?api=` or `?token=` to copy by hand.

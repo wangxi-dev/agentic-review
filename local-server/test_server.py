@@ -5,6 +5,7 @@ Run:  python3 local-server/test_server.py
 """
 import json
 import os
+import socket
 import subprocess
 import sys
 import tempfile
@@ -1154,6 +1155,64 @@ class SessionStorageTests(unittest.TestCase):
     def test_session_dir_is_under_comments_root(self):
         d = self.C.session_dir("/some/repo")
         self.assertEqual(os.path.dirname(d), self.C.COMMENTS_ROOT)
+
+
+class PortSelectionTests(unittest.TestCase):
+    """Per-session port picking (scripts/common.py): repos get their own lane,
+    the scan finds a free one, and racing launches can retry past a taken port."""
+
+    @classmethod
+    def setUpClass(cls):
+        scripts = os.path.abspath(os.path.join(
+            os.path.dirname(__file__), "..", "skills", "agentic-review", "scripts"))
+        if scripts not in sys.path:
+            sys.path.insert(0, scripts)
+        import common as ar_common  # noqa: E402
+        cls.C = ar_common
+
+    def test_preferred_port_is_stable_for_same_repo(self):
+        a = self.C.preferred_port("/some/repo/path")
+        b = self.C.preferred_port("/some/repo/path")
+        self.assertEqual(a, b)
+
+    def test_preferred_port_within_window(self):
+        base, window = self.C.DEFAULT_PORT, self.C.PORT_WINDOW
+        for seed in ("/a", "/b/c", "/home/x/proj", "/weird name!"):
+            p = self.C.preferred_port(seed)
+            self.assertTrue(base <= p < base + window, "%s -> %d" % (seed, p))
+
+    def test_preferred_port_spreads_repos(self):
+        # Different repos should mostly land on different starting ports so
+        # concurrent launches don't all pile onto 8900.
+        seeds = ["/repo/%d" % i for i in range(40)]
+        ports = {self.C.preferred_port(s) for s in seeds}
+        self.assertGreater(len(ports), 20)
+
+    def test_find_free_port_returns_bindable_port(self):
+        p = self.C.find_free_port(self.C.DEFAULT_PORT)
+        s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        try:
+            s.bind(("127.0.0.1", p))  # must be free right now
+        finally:
+            s.close()
+
+    def test_find_free_port_skips_a_bound_port(self):
+        # Hold a port, then confirm the scanner never returns it.
+        held = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        held.bind(("127.0.0.1", 0))
+        taken = held.getsockname()[1]
+        try:
+            got = self.C.find_free_port(taken, window=50, base=taken)
+            self.assertNotEqual(got, taken)
+        finally:
+            held.close()
+
+    def test_find_free_port_honours_avoid(self):
+        # A port that IS free but is in `avoid` (a prior racing attempt) is
+        # skipped — the retry must land elsewhere.
+        start = self.C.find_free_port(self.C.DEFAULT_PORT)
+        got = self.C.find_free_port(start, avoid={start})
+        self.assertNotEqual(got, start)
 
 
 class MetaJsonIgnoredTests(unittest.TestCase):
