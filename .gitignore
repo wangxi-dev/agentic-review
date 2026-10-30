@@ -1,4 +1,12 @@
 .secrets/
 .claude/
-__pycache__/
-*.pyc
+.pi-loop.json*
+node_modules/
+dist/
+src-tauri/target/
+src-tauri/gen/
+test-results/
+playwright-report/
+agentic-review.comments.json
+agentic-review.comments.md
+.agentic-review-export-*

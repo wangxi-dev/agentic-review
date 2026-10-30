@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>agentic-review</title>
+  <script type="module" src="/src/appearance.ts"></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-icon">ar</span><strong>agentic-review</strong><span class="local-badge">LOCAL</span></div>
+    <div class="appearance-controls" aria-label="Appearance">
+      <div class="appearance-field"><label for="theme-select">Theme</label>
+        <select id="theme-select"><option value="light">Light</option><option value="dark">Dark</option><option value="system">System</option></select>
+      </div>
+      <div class="appearance-field"><label for="text-size">Text size</label>
+        <select id="text-size"><option value="standard">Standard</option><option value="large">Large</option><option value="extra-large">Extra large</option></select>
+      </div>
+    </div>
+    <div class="header-actions"><button id="open-folder">Open folder…</button><button id="export" class="primary" disabled>Export comments</button></div>
+    <span id="appearance-status" class="sr-only" role="status"></span>
+  </header>
+  <div class="repository-bar"><span class="repository-label">Repository</span><span id="root" class="root-label">No repository open</span></div>
+  <div id="error" role="alert" hidden><span id="error-text"></span><button id="dismiss-error" aria-label="Dismiss error">×</button></div>
+  <section class="review-toolbar" aria-label="Review controls">
+    <div class="mode-switch" aria-label="Review mode">
+      <button data-mode="diff" class="active" disabled>Git diff</button>
+      <button data-mode="commit" disabled>Git commit</button>
+      <button data-mode="folder" disabled>Full folder</button>
+    </div>
+    <form id="revision-form" hidden>
+      <input id="revision" aria-label="Commit revision" placeholder="Commit hash, branch, or tag" value="HEAD" list="commits" />
+      <datalist id="commits"></datalist>
+      <button type="submit">Load commit</button>
+    </form>
+    <span id="context-label" class="muted">A quiet place to review your work.</span>
+    <button id="refresh" disabled title="Reload files and working-tree content">↻ Refresh</button>
+  </section>
+  <div class="workspace">
+    <aside class="files-panel" aria-label="Files">
+      <div class="panel-heading"><strong>Files</strong><span id="file-count" class="badge">0</span></div>
+      <input id="file-filter" type="search" placeholder="Filter files…" aria-label="Filter files" />
+      <div id="files"></div>
+      <div id="files-note" class="panel-foot">Choose a Git repository to begin.</div>
+    </aside>
+    <main class="viewer-panel">
+      <div class="viewer-toolbar"><span id="file-path">Review workspace</span><div id="view-tabs" class="mode-switch small"></div></div>
+      <div id="file-meta" class="file-meta" hidden></div>
+      <div id="content">
+        <div class="welcome"><span class="welcome-icon">ar</span><h1>Your code. Your review.</h1><p>Open a Git repository to explore changes,<br>read a commit, or review the whole folder.</p><button id="welcome-open" class="primary">Choose repository…</button><p class="hint">Or launch <code>agentic-review.exe [path]</code></p><div class="welcome-features"><span>Syntax-highlighted source</span><span>Documents & image previews</span><span>Comments saved locally</span></div></div>
+      </div>
+    </main>
+    <aside class="comments-panel" aria-label="Comments">
+      <div class="panel-heading"><strong>Comments</strong><span id="comment-count" class="badge">0</span><select id="comment-scope" aria-label="Comment scope"><option value="file">This file</option><option value="all">All comments</option></select></div>
+      <form id="comment-form">
+        <div class="anchor-row"><span id="anchor-label">File-level comment</span><button id="clear-anchor" type="button" title="Clear line selection">×</button></div>
+        <textarea id="comment-text" rows="4" placeholder="What should be changed or considered?" aria-label="Comment text" disabled maxlength="100000"></textarea>
+        <div class="form-actions"><span class="muted" id="comment-hint">Click a line number to anchor.</span><button id="add-comment" class="primary" type="submit" disabled>Add comment</button><button id="cancel-edit" type="button" hidden>Cancel</button></div>
+      </form>
+      <div id="comment-list"></div>
+      <div class="panel-foot">Click a line, then shift-click for a range.<br>Preview blocks in Markdown are commentable.</div>
+    </aside>
+  </div>
+  <footer><span id="save-status" role="status">Local only · No server or account needed</span><span id="export-location">JSON + Markdown · saved to repository root</span></footer>
+  <script type="module" src="/src/main.ts"></script>
+</body>
+</html>

@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "main",
+  "description": "The local review window can pick a repository and handle close events.",
+  "windows": ["main"],
+  "permissions": ["core:default", "core:window:allow-destroy", "dialog:allow-open", "dialog:allow-confirm"]
+}
