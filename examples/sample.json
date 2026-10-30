@@ -1,6 +1,6 @@
 {
   "name": "agentic-review",
-  "version": "0.2.0",
+  "exampleOnly": true,
   "nested": {
     "array": [1, 2, 3],
     "object": { "a": true, "b": null, "c": "string" },
@@ -10,6 +10,8 @@
       }
     }
   },
-  "renderers": ["code", "markdown", "html", "json"],
-  "flags": { "loopbackOnly": true, "tokenRequired": true }
+  "reviewModes": ["diff", "commit", "folder"],
+  "previews": ["markdown", "html", "png", "jpeg", "webp"],
+  "appearance": { "theme": "light", "textSize": "standard" },
+  "commentExports": ["agentic-review.comments.json", "agentic-review.comments.md"]
 }

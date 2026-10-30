@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run src",
+    "test:ci": "node --test scripts/use-public-npm.test.mjs",
     "test:ui": "playwright test",
     "test:native": "node tests/native-smoke.mjs",
     "tauri": "tauri",

@@ -1,35 +1,47 @@
 # Sample Markdown
 
-A sample document to exercise the **markdown** preview renderer.
+A sample document for the **agentic-review desktop app**. Open this repository in **Full folder** mode, then select `examples/sample.md` to try the Markdown preview without modifying any files.
 
 ## Features
 
-- Bullet lists
+- Bullet lists and **strong text**
 - `inline code`
-- [links](https://github.com)
+- [A sample link](https://github.com) — links do not navigate away inside the app
+- Tables and syntax-highlighted code blocks
 
-## Table
+## Available views
 
-| Renderer | Mode        |
-| -------- | ----------- |
-| code     | full / diff |
-| markdown | preview     |
-| json     | tree        |
+| File type | Views |
+| --- | --- |
+| Source code and JSON | Source; Diff in Git diff/commit mode |
+| Markdown and HTML | Preview, Source; Diff in Git diff/commit mode |
+| PNG, JPG/JPEG, WebP | Preview; before/after image comparison in Diff |
+
+JSON is displayed as source, not as a collapsible tree. HTML is always sandboxed; there is no script-execution toggle.
 
 ## Code block
 
 ```python
 def hello():
-    return "world"
+    return "Read locally, leave a comment, export feedback."
 ```
 
-## Diagram
+## Mermaid source
+
+Mermaid fences are displayed as code, not rendered as diagrams:
 
 ```mermaid
 flowchart LR
-    A[Agent] -->|launch| B(Bridge server)
-    B --> C{Review shell}
-    C -->|comments| A
+    Open[Open Git root] --> Mode[Choose review mode]
+    Mode --> Read[Read files]
+    Read --> Comment[Add comments]
+    Comment --> Export[Save JSON and Markdown]
 ```
 
-> Blockquotes render too. Click any block in preview mode to anchor a comment.
+## Images and appearance
+
+Open `tests/fixtures/sample.png`, `tests/fixtures/sample.jpg`, or `tests/fixtures/sample.webp` directly from the file list to try image previews. The viewer offers **Fit** and **100%** controls. Relative or remote images embedded in Markdown/HTML are not fetched.
+
+Use **Theme** and **Text size** in the app's top bar to change appearance. These settings are remembered independently of the opened repository.
+
+> Click this block in Preview to anchor a comment to its starting source line. Adding a comment saves both `agentic-review.comments.json` and `agentic-review.comments.md` in the opened Git root.

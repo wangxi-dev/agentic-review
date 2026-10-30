@@ -12,14 +12,18 @@
 <body>
   <h1>Sample HTML page</h1>
   <div class="card">
-    <p>This renders inside a sandboxed <code>&lt;iframe&gt;</code>. The script
-       below is blocked by default; use the <strong>⚠ Run scripts</strong>
-       toggle above the preview to allow it.</p>
-    <button onclick="document.body.style.background='red'">Try to run script</button>
+    <p>In agentic-review, this page renders inside a sandboxed
+       <code>&lt;iframe&gt;</code>. Inline styles are preserved, but scripts,
+       interactive forms, navigation, and external resources are blocked.</p>
+    <p>The app has no script-execution toggle. The button and script in this
+       source are removed from Preview, so they cannot turn its background red.
+       Switch to <strong>Source</strong> to read or comment on their lines.</p>
+    <button onclick="document.body.style.background='red'">Removed from the app preview</button>
   </div>
   <script>
-    // Blocked by default (sandbox=""). Runs only after you opt in via the
-    // "⚠ Run scripts" toggle, which switches the iframe to sandbox="allow-scripts".
+    // Removed by the review app's sanitizer; its iframe also blocks scripts.
+    // This harmless demonstration can run if the raw file is opened directly
+    // in a regular browser instead of in agentic-review.
     document.body.style.background = "red";
   </script>
 </body>

@@ -1,0 +1,127 @@
+name: Build Windows app
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: windows-build-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    name: Test and package Windows x64
+    runs-on: windows-2022
+    timeout-minutes: 45
+    defaults:
+      run:
+        shell: pwsh
+    env:
+      CI: 'true'
+      CARGO_TERM_COLOR: always
+      RUST_BACKTRACE: '1'
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: package-lock.json
+
+      - name: Set up Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache Rust dependencies
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+
+      # The repository uses TPS locally. --registry alone does not replace the
+      # private tarball URLs in package-lock.json, so normalize this checkout's
+      # URLs first. Package versions and integrity hashes remain locked.
+      - name: Validate CI dependency preparation
+        run: node --test scripts/use-public-npm.test.mjs
+
+      - name: Install locked packages from public npm
+        run: |
+          node scripts/use-public-npm.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci --registry=https://registry.npmjs.org
+
+      - name: Check frontend and build web assets
+        run: npm run build
+
+      - name: Run unit tests
+        run: npm test
+
+      - name: Check Rust formatting
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
+
+      - name: Run Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --locked
+
+      - name: Check Rust warnings
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --locked --all-targets -- -D warnings
+
+      # Microsoft Edge is preinstalled on the Windows 2022 hosted runner.
+      # Browser tests are headless; the interactive native smoke test stays local.
+      - name: Run browser integration tests
+        run: npm run test:ui -- --workers=2
+
+      - name: Build release executable and NSIS installer
+        run: npm run package -- --ci -- --locked
+
+      - name: Stage executables and checksums
+        id: package
+        run: ./scripts/stage-windows-artifacts.ps1 -OutputDirectory (Join-Path $env:RUNNER_TEMP 'agentic-review-windows-x64')
+
+      - name: Upload Windows app
+        id: upload
+        uses: actions/upload-artifact@v4
+        with:
+          name: agentic-review-windows-x64-${{ steps.package.outputs.version }}-${{ github.run_number }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/agentic-review-windows-x64/
+          if-no-files-found: error
+          retention-days: 30
+          compression-level: 0
+
+      - name: Add download instructions to build summary
+        env:
+          ARTIFACT_URL: ${{ steps.upload.outputs.artifact-url }}
+        run: |
+          @"
+          ## Windows x64 build
+
+          [Download the app and installer]($env:ARTIFACT_URL)
+
+          Extract the ZIP, then run **agentic-review.exe** or the **x64-setup.exe** installer.
+          The ZIP includes usage instructions and SHA-256 checksums. These builds are unsigned.
+          Git and WebView2 are required at runtime. No Node.js, Rust, or TPS credentials are needed.
+          Artifacts are retained for 30 days; use **Run workflow** to generate a fresh build.
+          "@ | Out-File -FilePath $env:GITHUB_STEP_SUMMARY -Append -Encoding utf8
+
+      - name: Upload browser test diagnostics
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-test-diagnostics-${{ github.run_number }}-${{ github.run_attempt }}
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
