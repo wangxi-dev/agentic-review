@@ -24,6 +24,8 @@ test('folder picker, modes, source highlighting, and historical commit content',
   await expect(page.locator('.code-line.added')).toContainText('const value = 2');
   await page.getByRole('button', { name: 'Full folder', exact: true }).click();
   await expect(page.locator('#view-tabs')).not.toContainText('Diff');
+  await page.locator('[data-directory="src"]').click();
+  await page.locator('[data-path="src/main.ts"]').click();
   await expect(page.locator('.hljs-comment').first()).toBeVisible();
   await expect(page.locator('.code-line').nth(1).locator('.hljs-comment')).toContainText('comment */');
   await page.getByRole('button', { name: 'Git commit', exact: true }).click();
@@ -32,6 +34,93 @@ test('folder picker, modes, source highlighting, and historical commit content',
   await page.getByRole('button', { name: 'Load commit', exact: true }).click();
   await expect(page.getByRole('alert')).toContainText('Unknown revision');
   await expect(page.locator('#content')).toContainText('historical');
+});
+
+test('LF versus CRLF keeps context lines and shows only the real change with ASCII markers', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).testNewlineMode = 'changed'; });
+  await open(page);
+  await expect(page.locator('.code-line.removed')).toHaveCount(1);
+  await expect(page.locator('.code-line.added')).toHaveCount(1);
+  await expect(page.locator('.code-line[data-old="4"][data-new="4"] code')).toHaveText('console.log(value);');
+  await expect(page.locator('.code-line.removed .diff-marker')).toHaveText('-');
+  await expect(page.locator('.code-line.added .diff-marker')).toHaveText('+');
+  await expect(page.locator('.code-line.removed code')).toHaveText('const value = 1;');
+  await expect(page.locator('.code-line.added code')).toHaveText('const value = 2;');
+  await page.getByRole('button', { name: 'old line 3', exact: true }).click();
+  await expect(page.locator('#anchor-label')).toHaveText('Old line 3');
+  await page.getByRole('button', { name: 'new line 3', exact: true }).click();
+  await expect(page.locator('#anchor-label')).toHaveText('New line 3');
+  await expect(page.locator('[data-path="docs/readme.md"] .file-status')).toHaveText('+');
+  await expect(page.locator('[data-path="gone.ts"] .file-status')).toHaveText('-');
+  await expect(page.locator('[data-path="scratch.txt"] .file-status')).toHaveText('+');
+  await expect(page.locator('[data-path="scratch.txt"] .file-status')).toHaveAttribute('aria-label', 'Untracked');
+});
+
+test('line-ending-only conversions do not show every line as replaced', async ({ page }) => {
+  await page.addInitScript(() => { (window as any).testNewlineMode = 'only'; });
+  await open(page);
+  await expect(page.locator('#content')).toContainText('line-ending-only change');
+  await expect(page.locator('.code-line.added, .code-line.removed')).toHaveCount(0);
+});
+
+test('diff keeps untracked folders collapsed and expands one level at a time', async ({ page }) => {
+  await open(page);
+  await expect(page.getByRole('button', { name: 'Git diff', exact: true })).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator('[data-directory="scratch"]')).toBeVisible();
+  await expect(page.locator('[data-path="scratch/deep/file.txt"]')).toHaveCount(0);
+  await page.locator('[data-directory="scratch"]').click();
+  await expect(page.locator('[data-directory="scratch/deep"]')).toBeVisible();
+  await expect(page.locator('[data-path="scratch/deep/file.txt"]')).toHaveCount(0);
+  await page.locator('[data-directory="scratch/deep"]').click();
+  await page.locator('[data-path="scratch/deep/file.txt"]').click();
+  await expect(page.locator('#file-path')).toHaveText('scratch/deep/file.txt');
+});
+
+test('full folder loads only immediate children and searches nested filenames with wildcards', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Full folder', exact: true }).click();
+  await expect(page.locator('[data-directory="src"]')).toBeVisible();
+  await expect(page.locator('[data-path="src/main.ts"]')).toHaveCount(0);
+  await expect(page.locator('#file-path')).toHaveText('Review workspace');
+  expect(await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'list_folder').length)).toBe(0);
+  await page.locator('[data-directory="src"]').click();
+  await expect(page.locator('[data-path="src/main.ts"]')).toBeVisible();
+  await page.locator('[data-directory="src"]').click();
+  await page.locator('[data-directory="src"]').click();
+  expect(await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'list_folder').length)).toBe(1);
+  await page.getByLabel('Filter files').fill('*.json');
+  await expect(page.locator('#file-count')).toHaveText('3');
+  await expect(page.locator('[data-path="config/data.json"]')).toBeVisible();
+  await expect(page.locator('[data-path="src/main.ts"]')).toHaveCount(0);
+  await page.locator('[data-path="config/data.json"]').click();
+  await expect(page.locator('#file-path')).toHaveText('config/data.json');
+  await page.getByLabel('Filter files').fill('data?.json');
+  await expect(page.locator('#files')).toContainText('No files match');
+  await page.getByLabel('Filter files').fill('');
+  await expect(page.locator('[data-directory="src"]')).toBeVisible();
+  await expect(page.locator('[data-path="src/main.ts"]')).toBeVisible();
+});
+
+test('JSON prettify preserves numeric text, leaves files unchanged and keeps line anchors in Source', async ({ page }) => {
+  await open(page);
+  await page.getByRole('button', { name: 'Full folder', exact: true }).click();
+  await page.locator('[data-path="root.json"]').click();
+  await expect(page.locator('.code-line')).toHaveCount(1);
+  await page.getByRole('button', { name: 'Prettify JSON', exact: true }).click();
+  await expect(page.locator('#content')).toContainText('file unchanged');
+  await expect(page.locator('#content')).toContainText('9007199254740993');
+  expect(await page.locator('.code-line').count()).toBeGreaterThan(5);
+  await expect(page.locator('#content button.line-number')).toHaveCount(0);
+  await page.getByRole('button', { name: 'Original JSON', exact: true }).click();
+  await expect(page.locator('.code-line')).toHaveCount(1);
+  await page.getByRole('button', { name: 'new line 1', exact: true }).click();
+  await expect(page.locator('#anchor-label')).toHaveText('New line 1');
+  expect(await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'save_comments').length)).toBe(0);
+  await page.locator('[data-directory="config"]').click();
+  await page.locator('[data-path="config/bad.json"]').click();
+  await page.getByRole('button', { name: 'Prettify JSON', exact: true }).click();
+  await expect(page.locator('#content')).toContainText('Cannot prettify JSON');
+  await expect(page.locator('#content')).toContainText('{invalid');
 });
 
 test('old/new line comments, ranges, autosave, edit, resolve, delete, and reload', async ({ page }) => {
@@ -77,11 +166,92 @@ test('Markdown blocks are rendered and anchored to source lines; HTML is isolate
   await page.locator('[data-path="examples/page.html"]').click();
   const iframe = page.frameLocator('.html-preview');
   await expect(iframe.locator('h1')).toHaveText('HTML preview');
-  await expect(page.locator('.html-preview')).toHaveAttribute('sandbox', '');
+  await expect(page.locator('.html-preview')).toHaveAttribute('sandbox', 'allow-same-origin');
   await expect(iframe.locator('script')).toHaveCount(0);
   await expect(iframe.locator('a')).not.toHaveAttribute('href');
   expect(await page.evaluate(() => (window as any).compromised)).toBeUndefined();
   expect(external).toEqual([]);
+});
+
+test('exports show full selectable paths and copy the Markdown path', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await open(page);
+  await expect(page.getByRole('region', { name: 'Exported comment files' })).toBeHidden();
+  await page.getByRole('button', { name: 'Export comments', exact: true }).click();
+  await expect(page.getByLabel('Exported Markdown path')).toHaveValue('C:\\review-fixture\\agentic-review.comments.md');
+  await expect(page.getByLabel('Exported JSON path')).toHaveValue('C:\\review-fixture\\agentic-review.comments.json');
+  await page.getByRole('button', { name: 'Copy path', exact: true }).click();
+  await expect(page.locator('#save-status')).toHaveText('Markdown file path copied');
+  expect(await page.evaluate(() => navigator.clipboard.readText())).toBe('C:\\review-fixture\\agentic-review.comments.md');
+});
+
+test('copy all comments includes other files, contexts and resolved comments without saving', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await open(page);
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await expect(page.locator('#save-status')).toContainText('Copied all 0');
+  expect(await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'save_comments').length)).toBe(0);
+  await page.getByLabel('Comment text').fill('First file note');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.locator('.comment-card').getByRole('button', { name: '○ Open' }).click();
+  await page.getByRole('button', { name: 'Git commit', exact: true }).click();
+  await page.locator('[data-path="gone.ts"]').click();
+  await page.getByLabel('Comment text').fill('Historical deleted file note');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  const saves = await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'save_comments').length);
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await expect(page.locator('#save-status')).toContainText('Copied all 2');
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied).toContain('src/main.ts');
+  expect(copied).toContain('resolved');
+  expect(copied).toContain('First file note');
+  expect(copied).toContain('gone.ts');
+  expect(copied).toContain('commit');
+  expect(copied).toContain('Historical deleted file note');
+  expect(await page.evaluate(() => (window as any).testCalls.filter((c: any) => c.command === 'save_comments').length)).toBe(saves);
+  await page.evaluate(() => { navigator.clipboard.writeText = async () => { throw new Error('Clipboard unavailable'); }; });
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await expect(page.getByRole('alert')).toContainText('Clipboard unavailable');
+  await expect(page.getByRole('button', { name: 'Copy all comments', exact: true })).toBeEnabled();
+});
+
+test('HTML selections are saved, edited, reopened and copied with their quoted text', async ({ page, context }) => {
+  await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+  await open(page);
+  await page.locator('[data-path="examples/page.html"]').click();
+  const frame = page.frameLocator('.html-preview');
+  await expect(frame.locator('h1')).toHaveText('HTML preview');
+  const comment = page.getByRole('button', { name: 'Comment on selection', exact: true });
+  await expect(comment).toBeDisabled();
+  await frame.locator('h1').evaluate(node => {
+    const range = node.ownerDocument.createRange();
+    range.selectNodeContents(node);
+    const selection = node.ownerDocument.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await expect(comment).toBeEnabled();
+  await comment.click();
+  await expect(page.getByLabel('Comment text')).toBeFocused();
+  await expect(page.locator('#anchor-label')).toContainText('HTML selection: “HTML preview”');
+  await page.getByLabel('Comment text').fill('Please clarify this heading.');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  expect(await page.evaluate(() => (window as any).testSaved.comments[0].quote)).toBe('HTML preview');
+  await page.locator('.comment-card').getByRole('button', { name: 'Edit', exact: true }).click();
+  await page.getByLabel('Comment text').fill('Use a more specific heading.');
+  await page.getByRole('button', { name: 'Save edit', exact: true }).click();
+  await page.getByRole('button', { name: 'Open folder…', exact: true }).click();
+  await page.getByLabel('Comment scope').selectOption('all');
+  await page.locator('.comment-anchor').click();
+  await expect(page.frameLocator('.html-preview').locator('h1')).toBeVisible();
+  await expect(page.locator('#anchor-label')).toContainText('HTML preview');
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await expect(page.locator('#save-status')).toContainText('Copied all 1');
+  const copied = await page.evaluate(() => navigator.clipboard.readText());
+  expect(copied.replace(/\r\n/g, '\n')).toContain('Selected HTML text:\nHTML preview');
+  expect(copied).toContain('Use a more specific heading.');
+  await page.locator('#clear-anchor').click();
+  await expect(page.locator('#anchor-label')).toHaveText('File-level comment');
 });
 
 test('save failures retain comments and can be retried; drafts block navigation', async ({ page }) => {
@@ -220,6 +390,7 @@ test('PNG, JPEG, and WebP render; image diff, original size, deleted images, and
   await expect(page.locator('#content')).toContainText('Invalid image header');
   await expect(page.locator('.review-image')).toHaveCount(0);
   await page.getByRole('button', { name: 'Full folder', exact: true }).click();
+  await page.locator('[data-directory="images"]').click();
   await page.locator('[data-path="images/sample.webp"]').click();
   await expect(page.locator('#view-tabs')).not.toContainText('Diff');
   await expect(page.locator('.image-dimensions')).toHaveText('640 × 360 px');

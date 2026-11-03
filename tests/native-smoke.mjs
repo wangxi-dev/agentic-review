@@ -23,20 +23,22 @@ git('config', 'commit.gpgsign', 'false');
 git('config', 'core.autocrlf', 'false');
 git('config', 'core.hooksPath', '.no-hooks');
 await writeFile(join(root, 'main.ts'), 'const value = 1;\nconsole.log(value);\n');
+await writeFile(join(root, 'nested', 'config.json'), '{"big":9007199254740993,"nested":{"items":[1,2]}}');
 await writeFile(join(root, 'nested', 'readme.md'), '# Native Markdown\n\nA **rendered** paragraph.\n');
 await writeFile(join(root, 'preview.html'), '<style>h1{color:purple}</style><h1>Native HTML</h1><script>window.compromised = true</script>');
 git('add', '-A'); git('commit', '-m', 'Initial commit');
 await writeFile(join(root, 'main.ts'), 'const value = 2;\nconsole.log(value);\n');
 await writeFile(join(root, 'z-images', 'sample.png'), await readFile(new URL('./fixtures/changed.png', import.meta.url)));
 git('add', '-A'); git('commit', '-m', 'Second commit');
-await writeFile(join(root, 'main.ts'), 'const value = 3;\nconsole.log(value);\n');
+// Reproduce Git LF blobs versus Windows CRLF working-tree contents.
+await writeFile(join(root, 'main.ts'), 'const value = 3;\r\nconsole.log(value);\r\n');
 await writeFile(join(root, 'z-images', 'sample.png'), await readFile(new URL('./fixtures/sample.png', import.meta.url)));
 
 const server = createServer();
 await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
 const port = server.address().port;
 await new Promise(resolve => server.close(resolve));
-const executable = resolve('src-tauri/target/release/agentic-review.exe');
+const executable = resolve(process.env.AGENTIC_REVIEW_EXE || 'src-tauri/target/release/agentic-review.exe');
 let app;
 let browser;
 async function launch() {
@@ -84,6 +86,11 @@ try {
   assert.equal(await page.locator('html').getAttribute('data-theme'), 'light');
   assert.ok(await page.locator('.code-line:not(.hunk) code').first().evaluate(node => parseFloat(getComputedStyle(node).fontSize) >= 16));
   assert.match(await page.locator('#content').textContent(), /const value = 3/);
+  assert.equal(await page.locator('.code-line.added').count(), 1);
+  assert.equal(await page.locator('.code-line.removed').count(), 1);
+  assert.equal(await page.locator('.code-line.added .diff-marker').textContent(), '+');
+  assert.equal(await page.locator('.code-line.removed .diff-marker').textContent(), '-');
+  assert.equal(await page.locator('.code-line[data-old="2"][data-new="2"] code').textContent(), 'console.log(value);');
   await page.getByRole('button', { name: 'new line 1', exact: true }).click();
   await page.getByLabel('Comment text').fill('Native persisted review comment.');
   await page.getByRole('button', { name: 'Add comment', exact: true }).click();
@@ -92,6 +99,17 @@ try {
   assert.equal(comments.comments[0].text, 'Native persisted review comment.');
   assert.equal(comments.comments[0].line, 1);
   assert.match(await readFile(join(root, 'agentic-review.comments.md'), 'utf8'), /Native persisted review comment/);
+  await page.getByRole('button', { name: 'Export comments', exact: true }).click();
+  await page.locator('#export-result').waitFor();
+  assert.equal(await page.getByLabel('Exported Markdown path').inputValue(), join(root, 'agentic-review.comments.md'));
+  await page.getByRole('button', { name: 'Copy path', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('save-status')?.textContent === 'Markdown file path copied');
+  const clipboard = () => execFileSync('powershell.exe', ['-NoProfile', '-Command', 'Get-Clipboard -Raw'], { encoding: 'utf8', windowsHide: true }).trim();
+  assert.equal(clipboard(), join(root, 'agentic-review.comments.md'));
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('save-status')?.textContent?.startsWith('Copied all 1'));
+  assert.match(clipboard(), /Native persisted review comment/);
+  await page.getByRole('button', { name: 'Dismiss export paths', exact: true }).click();
   await page.getByRole('button', { name: 'Git commit', exact: true }).click();
   await page.waitForFunction(() => document.getElementById('context-label')?.textContent?.startsWith('Commit ') && document.getElementById('content')?.textContent?.includes('const value = 2'));
   assert.match(await page.locator('#content').textContent(), /const value = 2/);
@@ -100,10 +118,21 @@ try {
   await page.waitForFunction(() => document.querySelector('.review-image')?.naturalWidth === 640);
   assert.equal(await page.locator('.review-image').getAttribute('src'), `data:image/png;base64,${(await readFile(new URL('./fixtures/changed.png', import.meta.url))).toString('base64')}`);
   await page.getByRole('button', { name: 'Full folder', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('file-path')?.textContent === 'Review workspace' && !document.getElementById('refresh')?.disabled);
+  assert.equal(await page.locator('[data-path="z-images/sample.png"]').count(), 0);
+  await page.locator('[data-directory="z-images"]').click();
   for (const extension of ['png', 'jpg', 'webp']) {
     await page.locator(`[data-path="z-images/sample.${extension}"]`).click();
     await page.waitForFunction(() => document.querySelector('.review-image')?.naturalWidth === 640);
   }
+  await page.getByLabel('Filter files').fill('*.json');
+  await page.locator('[data-path="nested/config.json"]').click();
+  await page.getByRole('button', { name: 'Prettify JSON', exact: true }).click();
+  assert.match(await page.locator('#content').textContent(), /9007199254740993/);
+  assert.ok(await page.locator('.code-line').count() > 5);
+  assert.equal(await readFile(join(root, 'nested', 'config.json'), 'utf8'), '{"big":9007199254740993,"nested":{"items":[1,2]}}');
+  await page.getByLabel('Filter files').fill('');
+  await page.locator('[data-directory="nested"]').click();
   await page.locator('[data-path="nested/readme.md"]').click();
   await page.locator('.markdown h1').waitFor();
   assert.equal(await page.locator('.markdown h1').textContent(), 'Native Markdown');
@@ -111,6 +140,21 @@ try {
   await page.frameLocator('.html-preview').locator('h1').waitFor();
   assert.equal(await page.frameLocator('.html-preview').locator('h1').textContent(), 'Native HTML');
   assert.equal(await page.frameLocator('.html-preview').locator('script').count(), 0);
+  await page.frameLocator('.html-preview').locator('h1').evaluate(node => {
+    const range = node.ownerDocument.createRange();
+    range.selectNodeContents(node);
+    const selection = node.ownerDocument.getSelection();
+    selection.removeAllRanges();
+    selection.addRange(range);
+  });
+  await page.getByRole('button', { name: 'Comment on selection', exact: true }).click();
+  await page.getByLabel('Comment text').fill('Native selected heading comment.');
+  await page.getByRole('button', { name: 'Add comment', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('save-status')?.textContent?.startsWith('Saved 2'));
+  assert.equal(JSON.parse(await readFile(join(root, 'agentic-review.comments.json'), 'utf8')).comments[1].quote, 'Native HTML');
+  await page.getByRole('button', { name: 'Copy all comments', exact: true }).click();
+  await page.waitForFunction(() => document.getElementById('save-status')?.textContent?.startsWith('Copied all 2'));
+  assert.match(clipboard(), /Selected HTML text:[\s\S]*Native HTML/);
   await page.getByRole('button', { name: 'Git diff', exact: true }).click();
   await page.locator('[data-path="z-images/sample.png"]').click();
   await page.getByRole('button', { name: 'Diff', exact: true }).click();
@@ -132,7 +176,7 @@ try {
   assert.equal(await page.getByLabel('Theme', { exact: true }).inputValue(), 'dark');
   assert.equal(await page.getByLabel('Text size', { exact: true }).inputValue(), 'large');
   await closeNormally();
-  console.log('Native smoke test passed: all review modes, Markdown/HTML, PNG/JPEG/WebP, image comparison, theme/text-size persistence, exports, reload, and native close.');
+  console.log('Native smoke test passed: all review modes, lazy folders, filename glob search, JSON prettify, Markdown/HTML selection comments, clipboard and copyable export paths, PNG/JPEG/WebP, image comparison, theme/text-size persistence, exports, reload, and native close.');
 } catch (error) {
   const page = browser?.contexts()[0]?.pages()[0];
   if (page) {

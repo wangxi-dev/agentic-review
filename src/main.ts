@@ -1,8 +1,9 @@
 import { call, pickFolder, ask, handleClose } from './bridge';
 import { element, canPreview, isImage, renderContent } from './render';
 import { connectAppearanceControls } from './appearance';
+import { fileMatcher, fileStatus } from './files';
 import { anchorLabel, contextLabel, sameContext } from './types';
-import type { Anchor, Commit, Context, FileContent, FileEntry, Mode, Opened, ReviewComment, ReviewDocument, Snapshot, View } from './types';
+import type { Anchor, Commit, Context, FileContent, FileEntry, FileSearch, Mode, Opened, ReviewComment, ReviewDocument, Snapshot, View } from './types';
 import './styles.css';
 
 const $ = <T extends HTMLElement = HTMLElement>(id: string): T => document.getElementById(id) as T;
@@ -17,6 +18,12 @@ let busy = false;
 let dirty = false;
 let mode: Mode = 'diff';
 let activeContext: Context | null = null;
+const folders = new Map<string, FileEntry[]>();
+const expandedFolders = new Set<string>();
+let searchResult: FileSearch | null = null;
+let searchVersion = 0;
+let searchTimer: ReturnType<typeof setTimeout> | undefined;
+let searching = false;
 const draft = () => $('comment-text') as HTMLTextAreaElement;
 
 function showError(error: unknown): void {
@@ -27,7 +34,10 @@ function controls(): void {
   const opened = !!documentData;
   $('open-folder').toggleAttribute('disabled', busy);
   $('export').toggleAttribute('disabled', busy || !opened);
+  $('copy-comments').toggleAttribute('disabled', busy || !opened);
+  $('copy-export-path').toggleAttribute('disabled', busy);
   $('refresh').toggleAttribute('disabled', busy || !opened);
+  $<HTMLInputElement>('file-filter').disabled = busy || !opened;
   document.querySelectorAll<HTMLButtonElement>('[data-mode]').forEach(button => {
     button.disabled = busy || !opened;
     button.classList.toggle('active', button.dataset.mode === mode);
@@ -50,11 +60,18 @@ async function run(action: () => Promise<void>): Promise<void> {
   try { await action(); } catch (error) { showError(error); }
   finally { busy = false; controls(); }
 }
-async function persist(): Promise<void> {
+async function persist(showPaths = false): Promise<void> {
   if (!documentData) return;
   $('save-status').textContent = 'Saving comments…';
   try {
-    await call('save_comments', { document: documentData });
+    const paths = await call<string[]>('save_comments', { document: documentData });
+    const markdownPath = paths.find(path => path.endsWith('.md')) ?? '';
+    const jsonPath = paths.find(path => path.endsWith('.json')) ?? '';
+    $<HTMLInputElement>('markdown-path').value = markdownPath;
+    $<HTMLInputElement>('json-path').value = jsonPath;
+    $('export-location').textContent = markdownPath;
+    $('export-location').title = paths.join('\n');
+    if (showPaths) $('export-result').hidden = false;
     dirty = false;
     $('save-status').textContent = `Saved ${documentData.comments.length} comment(s) · JSON + Markdown`;
   } catch (error) {
@@ -111,13 +128,81 @@ function drawTabs(): void {
     button.addEventListener('click', () => { view = name; drawTabs(); drawContent(); });
     tabs.append(button);
   }
+  if (/\.json$/i.test(selected.path)) {
+    const button = element('button', view === 'pretty' ? 'active' : '', view === 'pretty' ? 'Original JSON' : 'Prettify JSON');
+    button.setAttribute('aria-pressed', String(view === 'pretty'));
+    button.title = 'Format JSON for viewing without changing the file. Use Source for line comments.';
+    button.addEventListener('click', () => { view = view === 'pretty' ? 'source' : 'pretty'; drawTabs(); drawContent(); });
+    tabs.append(button);
+  }
+}
+function fileButton(file: FileEntry): HTMLButtonElement {
+  const button = element('button', `file ${selected?.path === file.path ? 'active' : ''}`);
+  button.title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
+  button.dataset.path = file.path;
+  const status = fileStatus(file.status);
+  const marker = element('span', `file-status status-${file.status}`, status.symbol);
+  marker.title = status.label;
+  marker.setAttribute('aria-label', status.label);
+  button.append(marker, element('span', 'file-name', file.path.split('/').pop()!));
+  const count = documentData?.comments.filter(c => c.path === file.path).length ?? 0;
+  if (count) button.append(element('span', 'comment-dot', String(count)));
+  button.addEventListener('click', () => void run(async () => { if (await canNavigate()) await openFile(file); }));
+  return button;
+}
+function drawFolder(host: HTMLElement, files: FileEntry[]): void {
+  for (const file of files) {
+    if (!file.directory) { host.append(fileButton(file)); continue; }
+    const group = element('details', 'file-group lazy-folder');
+    const summary = element('summary', '', file.path.split('/').pop()!);
+    summary.dataset.directory = file.path;
+    group.open = expandedFolders.has(file.path);
+    const children = element('div', 'folder-children');
+    group.append(summary, children);
+    if (group.open) drawFolder(children, folders.get(file.path) ?? []);
+    group.addEventListener('toggle', () => {
+      if (!group.isConnected) return;
+      if (!group.open) { expandedFolders.delete(file.path); return; }
+      expandedFolders.add(file.path);
+      if (folders.has(file.path)) { children.replaceChildren(); drawFolder(children, folders.get(file.path)!); return; }
+      const root = documentData?.root;
+      const current = snapshot;
+      if (!root) return;
+      children.replaceChildren(element('div', 'empty-small', 'Loading…'));
+      void call<FileEntry[]>('list_folder', { root, directory: file.path }).then(entries => {
+        if (snapshot !== current) return;
+        folders.set(file.path, entries);
+        children.replaceChildren();
+        drawFolder(children, entries);
+        if (!entries.length) children.append(element('div', 'empty-small', 'Empty folder.'));
+      }).catch(error => {
+        if (snapshot !== current) return;
+        children.replaceChildren(element('div', 'empty-small', 'Could not load folder. Collapse and expand to retry.'));
+        showError(error);
+      });
+    });
+    host.append(group);
+  }
 }
 function drawFiles(): void {
   const host = $('files');
   host.replaceChildren();
-  const filter = $<HTMLInputElement>('file-filter').value.toLowerCase();
-  const files = snapshot?.files.filter(file => file.path.toLowerCase().includes(filter)) ?? [];
-  $('file-count').textContent = String(snapshot?.files.length ?? 0);
+  const filter = $<HTMLInputElement>('file-filter').value.trim();
+  if (mode === 'folder' && !filter) {
+    $('file-count').textContent = String(snapshot?.files.length ?? 0);
+    drawFolder(host, snapshot?.files ?? []);
+    if (!snapshot?.files.length) host.append(element('div', 'empty-small', 'No files to review.'));
+    return;
+  }
+  if (mode === 'folder' && searching) {
+    $('file-count').textContent = '…';
+    host.append(element('div', 'empty-small', 'Searching filenames…'));
+    return;
+  }
+  const matches = fileMatcher(filter);
+  const files = mode === 'folder' ? searchResult?.files ?? [] : snapshot?.files.filter(file => matches(file.path)) ?? [];
+  $('file-count').textContent = mode === 'folder' ? `${files.length}${searchResult?.truncated ? '+' : ''}` : String(snapshot?.files.length ?? 0);
+  if (mode === 'folder' && searchResult?.truncated) host.append(element('div', 'notice', 'Showing the first 500 matches. Refine your search.'));
   if (!files.length) {
     host.append(element('div', 'empty-small', filter ? 'No files match your filter.' : mode === 'diff' ? 'Working tree is clean.' : 'No files to review.'));
     return;
@@ -125,6 +210,7 @@ function drawFiles(): void {
   // Group full paths by directory. Nested groups can be collapsed without rebuilding the list.
   const groups = new Map<string, HTMLElement>();
   for (const file of files) {
+    if (file.directory) { drawFolder(host, [file]); continue; }
     const slash = file.path.lastIndexOf('/');
     const directory = slash < 0 ? '.' : file.path.slice(0, slash);
     let group = groups.get(directory);
@@ -137,14 +223,7 @@ function drawFiles(): void {
       host.append(details);
       groups.set(directory, group);
     }
-    const button = element('button', `file ${selected?.path === file.path ? 'active' : ''}`);
-    button.title = file.oldPath ? `${file.oldPath} → ${file.path}` : file.path;
-    button.dataset.path = file.path;
-    button.append(element('span', `file-status status-${file.status}`, file.status || '·'), element('span', 'file-name', file.path.slice(slash + 1)));
-    const count = documentData?.comments.filter(c => c.path === file.path).length ?? 0;
-    if (count) button.append(element('span', 'comment-dot', String(count)));
-    button.addEventListener('click', () => void run(async () => { if (await canNavigate()) await openFile(file); }));
-    group.append(button);
+    group.append(fileButton(file));
   }
 }
 async function openFile(file: FileEntry, context = snapshot?.context): Promise<void> {
@@ -175,14 +254,21 @@ async function loadSnapshot(nextMode = mode): Promise<void> {
     revision: nextMode === 'commit' ? $<HTMLInputElement>('revision').value.trim() || 'HEAD' : null,
   });
   const previous = selected?.path;
+  searchVersion++;
+  clearTimeout(searchTimer);
+  searching = false;
+  searchResult = null;
+  folders.clear();
+  expandedFolders.clear();
   snapshot = next;
   mode = nextMode;
   $('context-label').textContent = contextLabel(next.context);
-  $('files-note').textContent = mode === 'folder' ? 'Tracked + untracked · ignores respected' : mode === 'commit' ? 'Committed snapshot · first-parent comparison' : 'Staged + unstaged + untracked · vs HEAD';
+  $('files-note').textContent = mode === 'folder' ? 'Expand folders to load · search all filenames · * and ? wildcards' : mode === 'commit' ? 'Committed snapshot · first-parent comparison' : 'Staged + unstaged + untracked · vs HEAD';
   clearFile(next.files.length ? 'Select a file to begin reviewing.' : mode === 'diff' ? 'Nothing to review — your working tree is clean.' : 'No files in this review.');
   drawFiles();
-  const file = next.files.find(f => f.path === previous) ?? next.files[0];
+  const file = mode === 'folder' ? undefined : next.files.find(f => !f.directory && f.path === previous) ?? next.files.find(f => !f.directory);
   if (file) await openFile(file);
+  if ($<HTMLInputElement>('file-filter').value.trim()) filterFiles();
 }
 async function refreshCommits(): Promise<void> {
   if (!documentData) return;
@@ -204,7 +290,8 @@ async function openRepository(path: string): Promise<void> {
   clearFile('Loading repository…');
   $('root').textContent = opened.root;
   $('root').title = opened.root;
-  $('export-location').textContent = `${opened.root} · agentic-review.comments.{json,md}`;
+  $('export-result').hidden = true;
+  $('export-location').textContent = `${opened.root.replace(/[\\/]$/, '')}${opened.root.includes('\\') ? '\\' : '/'}agentic-review.comments.md`;
   $('export-location').title = $('export-location').textContent ?? '';
   $('save-status').textContent = `${opened.document.comments.length} saved comment(s) loaded · autosave on changes`;
   $<HTMLInputElement>('file-filter').value = '';
@@ -236,8 +323,9 @@ function drawComments(): void {
     heading.addEventListener('click', () => void run(async () => {
       if (!(await canNavigate())) return;
       await openFile({ path: comment.path, oldPath: comment.oldPath, status: '' }, comment.context);
-      anchor = { side: comment.side, line: comment.line, endLine: comment.endLine };
-      if (comment.line !== null) view = comment.side === 'old' && content?.new !== null ? 'diff' : 'source';
+      anchor = { side: comment.side, line: comment.line, endLine: comment.endLine, quote: comment.quote };
+      if (comment.quote) view = 'preview';
+      else if (comment.line !== null) view = comment.side === 'old' && content?.new !== null ? 'diff' : 'source';
       drawTabs(); drawContent();
       const target = document.querySelector<HTMLElement>(`#content [data-${comment.side}="${comment.line}"]`);
       target?.scrollIntoView({ block: 'center' });
@@ -255,7 +343,7 @@ function drawComments(): void {
       if (!(await canNavigate())) return;
       await openFile({ path: comment.path, oldPath: comment.oldPath, status: '' }, comment.context);
       editing = comment.id;
-      anchor = { side: comment.side, line: comment.line, endLine: comment.endLine };
+      anchor = { side: comment.side, line: comment.line, endLine: comment.endLine, quote: comment.quote };
       draft().value = comment.text;
       updateAnchor();
       // Focus after run() re-enables the form.
@@ -280,9 +368,43 @@ connectAppearanceControls();
 $('open-folder').addEventListener('click', chooseFolder);
 $('welcome-open').addEventListener('click', chooseFolder);
 $('dismiss-error').addEventListener('click', () => { $('error').hidden = true; });
-$('export').addEventListener('click', () => void run(persist));
+$('export').addEventListener('click', () => void run(() => persist(true)));
+$('dismiss-export').addEventListener('click', () => { $('export-result').hidden = true; });
+$('copy-export-path').addEventListener('click', () => void run(async () => {
+  await navigator.clipboard.writeText($<HTMLInputElement>('markdown-path').value);
+  $('save-status').textContent = 'Markdown file path copied';
+}));
+$('copy-comments').addEventListener('click', () => void run(async () => {
+  if (!documentData) return;
+  const markdown = await call<string>('comments_markdown', { document: documentData });
+  await navigator.clipboard.writeText(markdown);
+  $('save-status').textContent = `Copied all ${documentData.comments.length} comment(s) · Markdown`;
+}));
 $('refresh').addEventListener('click', () => void run(async () => { if (await canNavigate()) { await loadSnapshot(); await refreshCommits(); } }));
-$('file-filter').addEventListener('input', drawFiles);
+function filterFiles(): void {
+  clearTimeout(searchTimer);
+  const version = ++searchVersion;
+  const query = $<HTMLInputElement>('file-filter').value.trim();
+  searchResult = null;
+  searching = mode === 'folder' && !!query;
+  drawFiles();
+  if (!searching || !documentData) return;
+  const root = documentData.root;
+  searchTimer = setTimeout(() => {
+    void call<FileSearch>('search_files', { root, query }).then(result => {
+      if (version !== searchVersion) return;
+      searchResult = result;
+      searching = false;
+      drawFiles();
+    }).catch(error => {
+      if (version !== searchVersion) return;
+      searching = false;
+      drawFiles();
+      showError(error);
+    });
+  }, 200);
+}
+$('file-filter').addEventListener('input', filterFiles);
 $('comment-scope').addEventListener('change', drawComments);
 $('clear-anchor').addEventListener('click', () => { if (!editing) { anchor = { side: 'new', line: null, endLine: null }; updateAnchor(); } });
 $('cancel-edit').addEventListener('click', () => { resetDraft(); controls(); });
@@ -310,7 +432,7 @@ $('comment-form').addEventListener('submit', event => {
 draft().addEventListener('keydown', event => { if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') $('comment-form').dispatchEvent(new Event('submit', { cancelable: true })); });
 document.addEventListener('keydown', event => {
   if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'o') { event.preventDefault(); chooseFolder(); }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void run(persist); }
+  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void run(() => persist(true)); }
 });
 
 controls();

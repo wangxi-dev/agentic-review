@@ -8,7 +8,7 @@ A standalone **Tauri desktop app** for reading local repositories and leaving re
 
 ## Launch
 
-Double-click `agentic-review.exe`, then **Open folder…** and choose a Git working tree. Selecting a subfolder opens its Git root. Linked Git worktrees are supported; bare repositories and non-Git folders are not.
+Launch `agentic-review.exe` to review the process's current working directory, or use **Open folder…** to choose a Git working tree. Selecting a subfolder opens its Git root. Linked Git worktrees are supported; bare repositories and non-Git folders are not. If the startup directory is not a Git working tree, use **Open folder…** to select one.
 
 From the directory containing the extracted executable, you can also open a repository directly in PowerShell:
 
@@ -17,7 +17,16 @@ From the directory containing the extracted executable, you can also open a repo
 .\agentic-review.exe .
 ```
 
-The second command reviews the current directory, which must be inside a Git working tree. If the executable is elsewhere, use its full path, for example `& "C:\Apps\agentic-review.exe" "C:\work\my-repository"`. Relative repository paths are resolved from the process's current working directory; without a path, the app starts at its welcome screen.
+The second command reviews the current directory, which must be inside a Git working tree. If the executable is elsewhere, use its full path, for example `& "C:\Apps\agentic-review.exe" "C:\work\my-repository"`. Relative repository paths are resolved from the process's current working directory; omitting the path also reviews that directory.
+
+With the executable's folder on your user `PATH`, launch it from any terminal or agent:
+
+```powershell
+agentic-review                         # review the caller's current directory
+agentic-review "C:\work\my-repository" # review an explicit repository
+```
+
+Agents should set their command's working directory to the repository being reviewed. To launch without waiting for the desktop app to close, use `Start-Process agentic-review -WorkingDirectory (Get-Location).Path` in PowerShell. After changing your user `PATH`, restart your terminal or agent host so it inherits the updated environment.
 
 The executable needs **Git on PATH** and the **Microsoft Edge WebView2 Runtime** (normally present on Windows 10/11). It does not need Node.js, Rust, Python, a local server, or an internet connection at runtime. The NSIS installer can install WebView2 if missing; that first-time runtime installation may require internet access.
 
@@ -34,24 +43,26 @@ Both preferences are remembered locally across restarts and repositories. Switch
 
 | Mode | Files and contents |
 | --- | --- |
-| **Git diff** | Combined staged + unstaged changes against `HEAD`, plus untracked, non-ignored files. An unborn repository uses an empty baseline. |
+| **Git diff** | Default view: combined staged + unstaged changes against `HEAD`, plus untracked, non-ignored files. Untracked folders stay collapsed and load one level at a time when expanded. An unborn repository uses an empty baseline. |
 | **Git commit** | A selected commit against its **first parent**, using the actual committed contents, not the working tree. A root commit uses an empty baseline. Enter a hash, branch, or tag; the revision field suggests the latest 200 commits from `HEAD`. |
-| **Full folder** | Current tracked and untracked files, excluding ignored untracked files and deleted files. Tracked files remain visible even if they match ignore rules. |
+| **Full folder** | Loads root folders and files first; expand a folder to load its immediate children. Search finds tracked and untracked files throughout the repository, respecting ignores. Tracked files remain visible even if they match ignore rules. |
 
 **Refresh** reloads the file list and current contents; there is no automatic file watching. Git diff shows the net working-tree difference against `HEAD`, not separate staged and unstaged patches, so changes that cancel each other out will not appear. The app does not stage, commit, check out, or modify source files. A rename retains the previous path; deleted files can be read and commented on from the old side.
 
 ### Reading files
 
 - **Source:** syntax highlighting, line numbers, and inline comments.
-- **Diff:** highlighted unified changes with separate old/new line anchors.
+- **Diff:** highlighted unified changes with separate old/new line anchors and `+` / `-` markers in a dedicated gutter. LF/CRLF differences are normalized so Windows line endings do not turn a small edit into a whole-file replacement. Whitespace changes and missing-final-newline markers are preserved.
+- The file list uses `+` for added or untracked files and `-` for deleted files. Hover over the marker to see the status.
 - **Preview:** rendered Markdown and sandboxed HTML, available alongside source; **PNG, JPG/JPEG, and WebP** files open as images.
 - Click a source/diff line number to anchor a comment. Shift-click another line on the same side for a range.
-- Click a Markdown block to anchor a comment to its starting source line. For HTML line comments, switch to Source.
-- Use the file filter to find paths; directory groups are collapsible.
+- Click a Markdown block to anchor a comment to its starting source line. In HTML Preview, select text and click **Comment on selection**. The comment retains the selected text as a quote; use Source when you need a line-number anchor.
+- Search filenames or paths with plain text, or use wildcards: `*.json`, `app?.ts`, `src/*.json`. Matching is case-insensitive; `*` matches any characters and `?` matches one. In Full folder mode, search runs across the repository after a short typing delay and displays up to 500 matches. Clear the search to return to the folder tree.
+- **Prettify JSON:** formats JSON for reading without changing the file. **Original JSON** restores the original source. Formatting preserves large numeric literals and duplicate keys. Use Source for line comments; formatted line numbers are display-only.
 
 HTML scripts, navigation, forms, and external resources are blocked. Markdown is sanitized; links do not navigate away from the app. Embedded data images are supported. External or repository-relative images/stylesheets are not loaded; inline HTML styles are supported. Mermaid fences are displayed as code rather than executed.
 
-Text previews require UTF-8 and are limited to **5 MiB**. Unsupported binary files, symbolic links, submodules, and oversized files show an explanatory notice and still allow file-level comments. Files over 250,000 characters skip syntax highlighting; source/diff views stop at 20,000 rows, and diff computation has a one-second time limit to keep the UI responsive. JSON files use Source and Diff, not a tree or a pretty-printed JSON comparison.
+Text previews require UTF-8 and are limited to **5 MiB**. Unsupported binary files, symbolic links, submodules, and oversized files show an explanatory notice and still allow file-level comments. Files over 250,000 characters skip syntax highlighting; source/diff views stop at 20,000 rows, and diff computation has a one-second time limit to keep the UI responsive. JSON files support Source, Diff, and a display-only prettify toggle; diffs always use the original text.
 
 ### Image review
 
@@ -73,12 +84,16 @@ Every add, edit, resolve/reopen, or delete automatically writes **both** files t
 <git-root>/agentic-review.comments.md
 ```
 
-**Export comments** writes them on demand, including an empty review, and retries a failed save. No files are written just by browsing a repository. The footer shows save status; failed writes leave comments in memory and display an error. Finish a save before closing, or explicitly discard unsaved changes. Unsaved drafts require confirmation before navigating away.
+**Export comments** writes them on demand, including an empty review, and retries a failed save. After export, a panel shows the full Markdown and JSON paths in selectable fields. Use **Copy path** to paste the Markdown file path into your agent.
+
+**Copy all comments** copies the Markdown review directly to the clipboard, including all files, review contexts, and resolved comments. It does not write or export a file. Added and edited comments still autosave as usual; unfinished drafts are not included.
+
+No files are written just by browsing a repository. The footer shows save status; failed writes leave comments in memory and display an error. Finish a save before closing, or explicitly discard unsaved changes. Unsaved drafts require confirmation before navigating away.
 
 - JSON is the editable persistence format and is reloaded when the repository opens. Close the app before editing that file manually, then reopen the repository; external changes are not watched or merged.
 - Markdown is a readable export; editing it does not update the app.
 - Both exports contain **all comments**, across all files, modes, and commits, including resolved comments and comments on files that no longer exist.
-- Each comment records its path, previous path for renames, mode, base/revision hashes, old/new side, line/range, status, and timestamps.
+- Each comment records its path, previous path for renames, mode, base/revision hashes, old/new side, line/range or selected HTML text, status, and timestamps.
 - Working-tree comments record the baseline commit, but **do not snapshot working-tree file contents**. Line anchors are not automatically rebased after subsequent edits. Historical commit comments can reopen their recorded commit while it remains available in Git.
 - **This file** shows comments from every review of the current file, with their context labels. Inline comments only show for the active review context. **All comments** includes every file; clicking a comment opens its recorded context.
 - Malformed or unsupported JSON is not silently overwritten: fix or rename the file before opening the repository.

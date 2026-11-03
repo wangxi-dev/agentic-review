@@ -1,6 +1,29 @@
 use crate::repository::*;
 use std::{fs, path::Path, process::Command};
 
+#[test]
+fn startup_defaults_to_current_working_directory() {
+    assert_eq!(
+        crate::resolve_startup_path(None),
+        Some(
+            std::env::current_dir()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        )
+    );
+}
+
+#[test]
+fn startup_preserves_explicit_repository_path() {
+    for path in [".", "../another-repository", r"C:\work\my repository"] {
+        assert_eq!(
+            crate::resolve_startup_path(Some(path.into())),
+            Some(path.to_owned())
+        );
+    }
+}
+
 struct Fixture {
     dir: tempfile::TempDir,
     repo: Repository,
@@ -57,6 +80,7 @@ impl Fixture {
                 side: "old".into(),
                 line: Some(2),
                 end_line: Some(4),
+                quote: None,
                 text: "Keep <this> literal.\n```\nNested fence\n```".into(),
                 status: "open".into(),
                 created_at: "2026-10-30T01:00:00Z".into(),
@@ -103,6 +127,46 @@ fn diff_combines_staged_unstaged_untracked_and_deleted() {
         .files
         .iter()
         .any(|f| f.path == "new file 漢字.md" && f.status == "?"));
+}
+
+#[test]
+fn diff_keeps_untracked_directories_collapsed_and_excludes_cancelled_changes() {
+    let f = Fixture::new();
+    f.write("tracked.txt", "original\n");
+    f.commit("initial");
+    f.write("tracked.txt", "staged\n");
+    git(f.dir.path(), &["add", "tracked.txt"]);
+    f.write("tracked.txt", "original\n");
+    for index in 0..200 {
+        f.write(&format!("untracked/deep/{index}.json"), "{}");
+    }
+    let snapshot = f.repo.snapshot(Mode::Diff, None).unwrap();
+    assert_eq!(snapshot.files.len(), 1);
+    assert_eq!(snapshot.files[0].path, "untracked");
+    assert_eq!(snapshot.files[0].status, "?");
+    assert!(snapshot.files[0].directory);
+    let children = f.repo.folder_entries("untracked").unwrap();
+    assert_eq!(children.len(), 1);
+    assert_eq!(children[0].path, "untracked/deep");
+    assert!(children[0].directory);
+}
+
+#[test]
+fn unborn_diff_includes_staged_files_and_collapsed_untracked_directories() {
+    let f = Fixture::new();
+    f.write("staged.txt", "new");
+    git(f.dir.path(), &["add", "staged.txt"]);
+    f.write("nested/deep/file.txt", "new");
+    let snapshot = f.repo.snapshot(Mode::Diff, None).unwrap();
+    assert_eq!(snapshot.files.len(), 2);
+    assert!(snapshot
+        .files
+        .iter()
+        .any(|e| e.path == "staged.txt" && e.status == "A" && !e.directory));
+    assert!(snapshot
+        .files
+        .iter()
+        .any(|e| e.path == "nested" && e.status == "?" && e.directory));
 }
 
 #[test]
@@ -171,7 +235,63 @@ fn folder_honors_ignores_and_excludes_deleted_and_exports() {
     fs::remove_file(f.dir.path().join("gone")).unwrap();
     let snapshot = f.repo.snapshot(Mode::Folder, None).unwrap();
     let paths: Vec<_> = snapshot.files.iter().map(|f| f.path.as_str()).collect();
-    assert_eq!(paths, vec![".gitignore", "new.txt", "src/a.ts"]);
+    assert_eq!(paths, vec!["src", ".gitignore", "new.txt"]);
+    assert!(snapshot.files[0].directory);
+    let nested = f.repo.folder_entries("src").unwrap();
+    assert_eq!(nested.len(), 1);
+    assert_eq!(nested[0].path, "src/a.ts");
+    assert!(!nested[0].directory);
+}
+
+#[test]
+fn folder_loading_is_shallow_and_preserves_tracked_ignored_files() {
+    let f = Fixture::new();
+    f.write("tracked/a.json", "{}");
+    f.write("tracked/root.json", "{}");
+    f.commit("initial");
+    f.write(".gitignore", "tracked/\nignored/\n");
+    f.write("ignored/a.json", "{}");
+    f.write("deep/a/b/c/d/file.json", "{}");
+    let entries = f.repo.folder_entries("").unwrap();
+    assert!(entries.iter().any(|e| e.path == "deep" && e.directory));
+    assert!(entries.iter().any(|e| e.path == "tracked" && e.directory));
+    assert!(!entries
+        .iter()
+        .any(|e| e.path.contains('/') || e.path == "ignored"));
+    assert_eq!(f.repo.folder_entries("tracked").unwrap().len(), 2);
+    for path in ["../outside", ".git", "/absolute", "deep/../tracked"] {
+        assert!(f.repo.folder_entries(path).is_err());
+    }
+}
+
+#[test]
+fn filename_search_supports_nested_globs_ignores_deleted_files_and_caps_results() {
+    let f = Fixture::new();
+    f.write(".gitignore", "ignored/\n");
+    f.write("gone.json", "{}");
+    f.commit("initial");
+    fs::remove_file(f.dir.path().join("gone.json")).unwrap();
+    f.write("config/nested/app.JSON", "{}");
+    f.write("config/app1.json", "{}");
+    f.write("config/other.txt", "text");
+    f.write("ignored/private.json", "{}");
+    f.write(JSON_FILE, "export");
+    let found = f.repo.search_files("*.json").unwrap();
+    assert_eq!(found.files.len(), 2);
+    assert!(!found.truncated);
+    assert_eq!(f.repo.search_files("app?.json").unwrap().files.len(), 1);
+    assert_eq!(
+        f.repo.search_files("config/*APP.json").unwrap().files.len(),
+        1
+    );
+    assert_eq!(f.repo.search_files("nested").unwrap().files.len(), 1);
+    assert!(f.repo.search_files("[abc]*.json").unwrap().files.is_empty());
+    for index in 0..510 {
+        f.write(&format!("many/{index}.json"), "{}");
+    }
+    let found = f.repo.search_files("*.json").unwrap();
+    assert_eq!(found.files.len(), 500);
+    assert!(found.truncated);
 }
 
 #[test]
@@ -262,7 +382,18 @@ fn binary_large_and_non_utf8_files_have_explicit_notices() {
 fn comments_round_trip_all_contexts_and_both_exports_replace_existing_files() {
     let f = Fixture::new();
     let mut doc = f.document();
-    f.repo.save(&doc).unwrap();
+    let paths = f.repo.save(&doc).unwrap();
+    assert_eq!(
+        paths[0],
+        Path::new(&doc.root).join(JSON_FILE).display().to_string()
+    );
+    assert_eq!(
+        paths[1],
+        Path::new(&doc.root)
+            .join(MARKDOWN_FILE)
+            .display()
+            .to_string()
+    );
     doc.comments[0].text = "Revised\n```\n<literal>\n```".into();
     doc.comments[0].status = "resolved".into();
     f.repo.save(&doc).unwrap();
@@ -277,6 +408,35 @@ fn comments_round_trip_all_contexts_and_both_exports_replace_existing_files() {
     doc.comments.clear();
     f.repo.save(&doc).unwrap();
     assert!(f.repo.opened().unwrap().document.comments.is_empty());
+}
+
+#[test]
+fn html_selection_round_trips_and_markdown_rendering_does_not_write_files() {
+    let f = Fixture::new();
+    let mut doc = f.document();
+    doc.comments[0].path = "preview.html".into();
+    doc.comments[0].line = None;
+    doc.comments[0].end_line = None;
+    doc.comments[0].quote = Some("Heading <literal>\n```\nselected text".into());
+    let markdown = render_markdown(&doc);
+    assert!(markdown.contains("HTML selection (old)"));
+    assert!(markdown.contains("Selected HTML text:\n\n````text\nHeading <literal>"));
+    assert!(!f.dir.path().join(JSON_FILE).exists());
+    assert!(!f.dir.path().join(MARKDOWN_FILE).exists());
+    f.repo.save(&doc).unwrap();
+    assert_eq!(
+        f.repo.opened().unwrap().document.comments[0].quote,
+        doc.comments[0].quote
+    );
+    // Existing schema-v1 stores do not need a migration.
+    let mut json = serde_json::to_value(&doc).unwrap();
+    json["comments"][0].as_object_mut().unwrap().remove("quote");
+    let legacy: Document = serde_json::from_value(json).unwrap();
+    assert!(legacy.comments[0].quote.is_none());
+    doc.comments[0].quote = Some("x".repeat(100001));
+    assert!(f.repo.save(&doc).is_err());
+    doc.comments[0].quote = Some("  ".into());
+    assert!(f.repo.save(&doc).is_err());
 }
 
 #[test]

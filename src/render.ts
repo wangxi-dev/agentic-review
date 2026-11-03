@@ -1,7 +1,8 @@
 import hljs from 'highlight.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
-import { structuredPatch } from 'diff';
+import { normalizeDiffText, reviewPatch } from './diff';
+import { prettyJson } from './files';
 import type { Anchor, FileContent, ReviewComment, View } from './types';
 
 export function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
@@ -82,6 +83,11 @@ function renderLines(host: HTMLElement, rows: { old: number | null; new: number 
     if (row.new !== null) line.dataset.new = String(row.new);
     if (options.view === 'diff') line.append(lineButton(row.old, 'old', options.onAnchor));
     line.append(lineButton(options.view === 'diff' || row.new !== null ? row.new : row.old, row.new !== null ? 'new' : 'old', options.onAnchor));
+    if (options.view === 'diff') {
+      const marker = element('span', 'diff-marker', row.type === 'added' ? '+' : row.type === 'removed' ? '-' : ' ');
+      marker.setAttribute('aria-label', row.type === 'added' ? 'Added line' : row.type === 'removed' ? 'Deleted line' : '');
+      line.append(marker);
+    }
     const code = element('code');
     code.innerHTML = row.html || ' ';
     line.append(code);
@@ -101,7 +107,11 @@ export function sanitizedMarkdown(source: string): string {
 }
 
 export function htmlDocument(source: string): string {
-  const clean = DOMPurify.sanitize(source, {
+  const purifier = DOMPurify(window);
+  purifier.addHook('uponSanitizeAttribute', (_node, data) => {
+    if (['src', 'poster', 'background'].includes(data.attrName) && !data.attrValue.startsWith('data:')) data.keepAttr = false;
+  });
+  const clean = purifier.sanitize(source, {
     WHOLE_DOCUMENT: true,
     ADD_TAGS: ['style'],
     FORBID_TAGS: ['script', 'base', 'meta', 'link', 'iframe', 'object', 'embed', 'form', 'input', 'button', 'textarea', 'select'],
@@ -113,13 +123,33 @@ export function htmlDocument(source: string): string {
 
 function preview(host: HTMLElement, source: string, options: RenderOptions, side: 'old' | 'new'): void {
   if (/\.(html?|xhtml)$/i.test(options.path)) {
-    host.append(element('div', 'notice', 'Sandboxed HTML · scripts, navigation, and external resources are blocked. Use Source to anchor a line comment.'));
+    const toolbar = element('div', 'html-preview-toolbar');
+    const hint = element('span', '', 'Select text in the preview, then comment. Scripts and external resources are blocked.');
+    const comment = element('button', '', 'Comment on selection');
+    comment.disabled = true;
+    toolbar.append(hint, comment);
     const frame = element('iframe', 'html-preview');
     frame.title = `Preview of ${options.path}`;
-    frame.setAttribute('sandbox', '');
+    // Parent-side selection access only. Never allow scripts in this same-origin frame.
+    frame.setAttribute('sandbox', 'allow-same-origin');
     frame.setAttribute('referrerpolicy', 'no-referrer');
+    let quote = '';
+    frame.addEventListener('load', () => {
+      const previewDocument = frame.contentDocument;
+      if (!previewDocument) return;
+      previewDocument.addEventListener('selectionchange', () => {
+        quote = previewDocument.getSelection()?.toString().trim() ?? '';
+        comment.disabled = !quote || new TextEncoder().encode(quote).length > 100000;
+        comment.title = comment.disabled && quote ? 'Select at most 100,000 UTF-8 bytes.' : 'Attach the selected text to your comment';
+      });
+    });
+    // Preserve the selection when focus moves from the frame to the toolbar.
+    comment.addEventListener('mousedown', event => event.preventDefault());
+    comment.addEventListener('click', () => {
+      if (quote) options.onAnchor({ side, line: null, endLine: null, quote }, false);
+    });
     frame.srcdoc = htmlDocument(source);
-    host.append(frame);
+    host.append(toolbar, frame);
     return;
   }
   // Match Marked's newline normalization so block anchors agree with source line numbers.
@@ -234,6 +264,26 @@ export function renderContent(host: HTMLElement, options: RenderOptions): void {
     if (source === null) { host.append(element('div', 'notice', 'File is no longer available. Refresh the file list.')); return; }
     if (side === 'old') host.append(element('div', 'notice', 'Deleted file · showing the old version.'));
     if (view === 'preview') { preview(host, source, options, side); return; }
+    if (view === 'pretty') {
+      try {
+        const formatted = prettyJson(source);
+        host.append(element('div', 'notice', 'Formatted JSON · display only; file unchanged. Use Source for original line comments.'));
+        const table = element('div', 'code-table source');
+        const lines = highlightedLines(formatted, path);
+        for (const [index, html] of lines.slice(0, 20000).entries()) {
+          const row = element('div', 'code-line');
+          const code = element('code');
+          code.innerHTML = html || ' ';
+          row.append(element('span', 'line-number', String(index + 1)), code);
+          table.append(row);
+        }
+        host.append(table);
+        if (lines.length > 20000) host.append(element('div', 'notice', 'Preview truncated at 20,000 rows.'));
+        return;
+      } catch (error) {
+        host.append(element('div', 'notice', `Cannot prettify JSON: ${String(error)}. Showing original source.`));
+      }
+    }
     if (source.length > 250000) host.append(element('div', 'notice', 'Large file · syntax highlighting disabled for responsiveness.'));
     const lines = highlightedLines(source, path);
     renderLines(host, lines.map((html, i) => ({ old: side === 'old' ? i + 1 : null, new: side === 'new' ? i + 1 : null, html, type: '' })), options);
@@ -244,10 +294,13 @@ export function renderContent(host: HTMLElement, options: RenderOptions): void {
     return;
   }
   const old = content.old ?? '', next = content.new ?? '';
-  const patch = structuredPatch(path, path, old, next, '', '', { context: 4, timeout: 1000 });
+  const patch = reviewPatch(path, old, next);
   if (!patch) { host.append(element('div', 'notice', 'This diff is too complex to render quickly. Use Source to read the file.')); return; }
-  if (!patch.hunks.length) { host.append(element('div', 'notice', 'No textual changes. This may be a rename, an empty file, a file-mode change, or a change since the last refresh.')); return; }
-  const oldLines = highlightedLines(old, path), newLines = highlightedLines(next, path);
+  if (old !== next && (old.includes('\r\n') || next.includes('\r\n'))) {
+    host.append(element('div', 'notice', 'LF/CRLF line-ending differences are ignored in this diff. Source files are unchanged.'));
+  }
+  if (!patch.hunks.length) { host.append(element('div', 'notice', 'No textual changes. This may be a rename, a line-ending-only change, an empty file, a file-mode change, or a change since the last refresh.')); return; }
+  const oldLines = highlightedLines(normalizeDiffText(old), path), newLines = highlightedLines(normalizeDiffText(next), path);
   const rows: { old: number | null; new: number | null; html: string; type: string }[] = [];
   for (const hunk of patch.hunks) {
     rows.push({ old: null, new: null, html: escapeHtml(`@@ -${hunk.oldStart},${hunk.oldLines} +${hunk.newStart},${hunk.newLines} @@`), type: 'hunk' });
@@ -255,7 +308,7 @@ export function renderContent(host: HTMLElement, options: RenderOptions): void {
     for (const line of hunk.lines) {
       if (line.startsWith('\\')) { rows.push({ old: null, new: null, html: escapeHtml(line), type: 'hunk' }); continue; }
       const removed = line.startsWith('-'), added = line.startsWith('+');
-      rows.push({ old: added ? null : a, new: removed ? null : b, html: `${removed ? '−' : added ? '+' : ' '} ${removed ? oldLines[a - 1] : newLines[b - 1]}`, type: removed ? 'removed' : added ? 'added' : '' });
+      rows.push({ old: added ? null : a, new: removed ? null : b, html: (removed ? oldLines[a - 1] : newLines[b - 1]) ?? '', type: removed ? 'removed' : added ? 'added' : '' });
       if (!added) a++;
       if (!removed) b++;
     }

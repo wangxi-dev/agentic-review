@@ -17,10 +17,14 @@
         <select id="text-size"><option value="standard">Standard</option><option value="large">Large</option><option value="extra-large">Extra large</option></select>
       </div>
     </div>
-    <div class="header-actions"><button id="open-folder">Open folder…</button><button id="export" class="primary" disabled>Export comments</button></div>
+    <div class="header-actions"><button id="open-folder">Open folder…</button><button id="copy-comments" disabled>Copy all comments</button><button id="export" class="primary" disabled>Export comments</button></div>
     <span id="appearance-status" class="sr-only" role="status"></span>
   </header>
   <div class="repository-bar"><span class="repository-label">Repository</span><span id="root" class="root-label">No repository open</span></div>
+  <section id="export-result" aria-label="Exported comment files" hidden>
+    <label for="markdown-path">Markdown</label><input id="markdown-path" readonly aria-label="Exported Markdown path" /><button id="copy-export-path">Copy path</button><button id="dismiss-export" aria-label="Dismiss export paths">×</button>
+    <label for="json-path">JSON</label><input id="json-path" readonly aria-label="Exported JSON path" />
+  </section>
   <div id="error" role="alert" hidden><span id="error-text"></span><button id="dismiss-error" aria-label="Dismiss error">×</button></div>
   <section class="review-toolbar" aria-label="Review controls">
     <div class="mode-switch" aria-label="Review mode">
@@ -39,7 +43,7 @@
   <div class="workspace">
     <aside class="files-panel" aria-label="Files">
       <div class="panel-heading"><strong>Files</strong><span id="file-count" class="badge">0</span></div>
-      <input id="file-filter" type="search" placeholder="Filter files…" aria-label="Filter files" />
+      <input id="file-filter" type="search" placeholder="Search files… e.g. *.json" aria-label="Filter files" maxlength="512" title="Search filenames or paths. Use * for any characters and ? for one character." />
       <div id="files"></div>
       <div id="files-note" class="panel-foot">Choose a Git repository to begin.</div>
     </aside>
@@ -58,7 +62,7 @@
         <div class="form-actions"><span class="muted" id="comment-hint">Click a line number to anchor.</span><button id="add-comment" class="primary" type="submit" disabled>Add comment</button><button id="cancel-edit" type="button" hidden>Cancel</button></div>
       </form>
       <div id="comment-list"></div>
-      <div class="panel-foot">Click a line, then shift-click for a range.<br>Preview blocks in Markdown are commentable.</div>
+      <div class="panel-foot">Click a line, then shift-click for a range.<br>Click Markdown blocks or select HTML preview text to comment.</div>
     </aside>
   </div>
   <footer><span id="save-status" role="status">Local only · No server or account needed</span><span id="export-location">JSON + Markdown · saved to repository root</span></footer>

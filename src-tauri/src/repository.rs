@@ -42,6 +42,8 @@ pub struct ReviewComment {
     pub side: String,
     pub line: Option<u32>,
     pub end_line: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quote: Option<String>,
     pub text: String,
     pub status: String,
     pub created_at: String,
@@ -64,12 +66,19 @@ pub struct Opened {
     pub document: Document,
 }
 
-#[derive(Debug, Serialize)]
+#[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FileEntry {
     pub path: String,
     pub old_path: Option<String>,
     pub status: String,
+    pub directory: bool,
+}
+
+#[derive(Serialize)]
+pub struct FileSearch {
+    pub files: Vec<FileEntry>,
+    pub truncated: bool,
 }
 
 #[derive(Serialize)]
@@ -113,6 +122,7 @@ impl ContentPart {
     }
 }
 
+#[derive(Clone)]
 pub struct Repository {
     pub root: PathBuf,
 }
@@ -323,20 +333,36 @@ impl Repository {
             base,
             revision,
         };
+        // Status summarizes untracked directories instead of enumerating every file inside.
+        let working_status = if context.mode == Mode::Diff {
+            parse_working_status(&text(git(
+                &self.root,
+                &[
+                    "status",
+                    "--porcelain=v1",
+                    "-z",
+                    "--untracked-files=normal",
+                    "--",
+                ],
+            )?)?)?
+        } else {
+            vec![]
+        };
+        if context.mode == Mode::Diff && !working_status.iter().any(|entry| entry.status != "?") {
+            return Ok(Snapshot {
+                context,
+                files: working_status
+                    .into_iter()
+                    .filter(|entry| !reserved(&entry.path))
+                    .collect(),
+            });
+        }
         let mut entries = BTreeMap::new();
         if context.mode == Mode::Folder {
-            for path in self.working_files()? {
-                if self.root.join(&path).symlink_metadata().is_ok() {
-                    entries.insert(
-                        path.clone(),
-                        FileEntry {
-                            path,
-                            old_path: None,
-                            status: String::new(),
-                        },
-                    );
-                }
-            }
+            return Ok(Snapshot {
+                context,
+                files: self.folder_entries("")?,
+            });
         } else if let Some(base) = &context.base {
             let mut args = vec![
                 "diff",
@@ -367,33 +393,21 @@ impl Repository {
                         path: path.to_owned(),
                         old_path: None,
                         status: "A".into(),
+                        directory: false,
                     },
                 );
             }
         } else {
-            for path in self.working_files()? {
-                entries.insert(
-                    path.clone(),
-                    FileEntry {
-                        path,
-                        old_path: None,
-                        status: "A".into(),
-                    },
-                );
+            // Unborn repositories have no HEAD; staged entries come directly from status.
+            for entry in &working_status {
+                entries.insert(entry.path.clone(), entry.clone());
             }
         }
-        if context.mode == Mode::Diff {
-            let raw = text(git(
-                &self.root,
-                &["ls-files", "--others", "--exclude-standard", "-z", "--"],
-            )?)?;
-            for path in raw.split('\0').filter(|p| !p.is_empty()) {
-                entries.entry(path.to_owned()).or_insert(FileEntry {
-                    path: path.to_owned(),
-                    old_path: None,
-                    status: "?".into(),
-                });
-            }
+        for entry in working_status
+            .into_iter()
+            .filter(|entry| entry.status == "?")
+        {
+            entries.entry(entry.path.clone()).or_insert(entry);
         }
         Ok(Snapshot {
             context,
@@ -401,6 +415,160 @@ impl Repository {
                 .into_values()
                 .filter(|f| !reserved(&f.path))
                 .collect(),
+        })
+    }
+
+    /// Read only immediate children; never descend into a directory to populate the tree.
+    pub fn folder_entries(&self, directory: &str) -> Result<Vec<FileEntry>> {
+        let disk = if directory.is_empty() {
+            self.root.clone()
+        } else {
+            self.safe_disk_path(directory)?
+        };
+        let mut entries = vec![];
+        for entry in fs::read_dir(disk).map_err(|e| format!("Cannot list folder: {e}"))? {
+            let entry = entry.map_err(|e| e.to_string())?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| "Non-UTF-8 filename.")?;
+            let path = if directory.is_empty() {
+                name
+            } else {
+                format!("{directory}/{name}")
+            };
+            if relative(&path).is_err() || reserved(&path) {
+                continue;
+            }
+            let kind = entry.file_type().map_err(|e| e.to_string())?;
+            if kind.is_symlink() {
+                continue;
+            }
+            entries.push(FileEntry {
+                path,
+                old_path: None,
+                status: String::new(),
+                directory: kind.is_dir(),
+            });
+        }
+        if !entries.is_empty() {
+            // One Git process for all immediate children. Git keeps tracked ignored files visible.
+            let mut command = Command::new("git");
+            command
+                .current_dir(&self.root)
+                .args(["check-ignore", "--stdin", "-z"])
+                .stdin(std::process::Stdio::piped())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::piped());
+            #[cfg(windows)]
+            {
+                use std::os::windows::process::CommandExt;
+                command.creation_flags(0x08000000);
+            }
+            let mut child = command.spawn().map_err(|e| e.to_string())?;
+            let input: Vec<u8> = entries
+                .iter()
+                .flat_map(|e| e.path.bytes().chain(std::iter::once(0)))
+                .collect();
+            // Write concurrently so a large ignored listing cannot fill both pipes and deadlock.
+            let mut stdin = child.stdin.take().ok_or("Cannot check ignored paths.")?;
+            let writer = std::thread::spawn(move || stdin.write_all(&input));
+            let out = child.wait_with_output().map_err(|e| e.to_string())?;
+            writer
+                .join()
+                .map_err(|_| "Cannot check ignored paths.")?
+                .map_err(|e| e.to_string())?;
+            if !out.status.success() && out.status.code() != Some(1) {
+                return Err(String::from_utf8_lossy(&out.stderr).into_owned());
+            }
+            let ignored = text(out.stdout)?;
+            let ignored: std::collections::HashSet<_> = ignored.split('\0').collect();
+            let mut visible = vec![];
+            for entry in entries {
+                if ignored.contains(entry.path.as_str()) {
+                    // An ignored directory can still contain tracked files.
+                    if !entry.directory
+                        || git(
+                            &self.root,
+                            &["ls-files", "--cached", "-z", "--", &entry.path],
+                        )?
+                        .is_empty()
+                    {
+                        continue;
+                    }
+                }
+                visible.push(entry);
+            }
+            entries = visible;
+        }
+        entries.sort_by(|a, b| b.directory.cmp(&a.directory).then(a.path.cmp(&b.path)));
+        Ok(entries)
+    }
+
+    pub fn search_files(&self, query: &str) -> Result<FileSearch> {
+        let query = query.trim();
+        if query.is_empty() {
+            return Ok(FileSearch {
+                files: vec![],
+                truncated: false,
+            });
+        }
+        if query.len() > 512 {
+            return Err("Search is limited to 512 characters.".into());
+        }
+        let glob = query.contains(['*', '?']);
+        let pattern = if glob {
+            format!(
+                "^{}$",
+                query
+                    .chars()
+                    .map(|ch| match ch {
+                        '*' => ".*".to_owned(),
+                        '?' => ".".to_owned(),
+                        _ => regex::escape(&ch.to_string()),
+                    })
+                    .collect::<String>()
+            )
+        } else {
+            regex::escape(query)
+        };
+        let matcher = regex::RegexBuilder::new(&pattern)
+            .case_insensitive(true)
+            .build()
+            .map_err(|e| e.to_string())?;
+        let mut files = vec![];
+        let mut paths = self.working_files()?;
+        paths.sort();
+        paths.dedup();
+        for path in paths {
+            let target = if glob && !query.contains('/') {
+                path.rsplit('/').next().unwrap_or(&path)
+            } else {
+                &path
+            };
+            if reserved(&path) || !matcher.is_match(target) {
+                continue;
+            }
+            // Only stat matching results, never every file in the repository.
+            if !self.root.join(&path).is_file() {
+                continue;
+            }
+            if files.len() == 500 {
+                return Ok(FileSearch {
+                    files,
+                    truncated: true,
+                });
+            }
+            files.push(FileEntry {
+                path,
+                old_path: None,
+                status: String::new(),
+                directory: false,
+            });
+        }
+        Ok(FileSearch {
+            files,
+            truncated: false,
         })
     }
 
@@ -567,8 +735,14 @@ impl Repository {
                 .map_err(|e| format!("Cannot save {name}: {e}"))?;
         }
         Ok(vec![
-            self.root.join(JSON_FILE).display().to_string(),
-            self.root.join(MARKDOWN_FILE).display().to_string(),
+            PathBuf::from(self.root_string())
+                .join(JSON_FILE)
+                .display()
+                .to_string(),
+            PathBuf::from(self.root_string())
+                .join(MARKDOWN_FILE)
+                .display()
+                .to_string(),
         ])
     }
 }
@@ -631,6 +805,41 @@ fn decode_content(bytes: Vec<u8>, path: &str) -> ContentPart {
     }
 }
 
+fn parse_working_status(raw: &str) -> Result<Vec<FileEntry>> {
+    let mut fields = raw.split('\0').filter(|field| !field.is_empty());
+    let mut entries = vec![];
+    while let Some(record) = fields.next() {
+        let flags = record.get(..2).ok_or("Invalid Git status entry.")?;
+        let path = record.get(3..).ok_or("Invalid Git status path.")?;
+        let old_path = if flags.contains(['R', 'C']) {
+            Some(
+                fields
+                    .next()
+                    .ok_or("Invalid Git status rename.")?
+                    .to_owned(),
+            )
+        } else {
+            None
+        };
+        let directory = flags == "??" && path.ends_with('/');
+        entries.push(FileEntry {
+            path: path.trim_end_matches('/').to_owned(),
+            old_path,
+            status: if flags == "??" {
+                "?".into()
+            } else {
+                flags
+                    .chars()
+                    .find(|ch| *ch != ' ')
+                    .ok_or("Invalid Git status flags.")?
+                    .to_string()
+            },
+            directory,
+        });
+    }
+    Ok(entries)
+}
+
 fn parse_status(raw: &str) -> Result<Vec<FileEntry>> {
     let mut fields = raw.split('\0').filter(|p| !p.is_empty());
     let mut entries = vec![];
@@ -649,6 +858,7 @@ fn parse_status(raw: &str) -> Result<Vec<FileEntry>> {
             path: path.to_owned(),
             old_path,
             status: status.chars().take(1).collect(),
+            directory: false,
         });
     }
     Ok(entries)
@@ -672,6 +882,9 @@ fn validate_document(doc: &Document) -> Result<()> {
             || !ids.insert(&c.id)
             || c.text.trim().is_empty()
             || c.text.len() > 100000
+            || c.quote
+                .as_ref()
+                .is_some_and(|quote| quote.trim().is_empty() || quote.len() > 100000)
             || !matches!(c.status.as_str(), "open" | "resolved")
             || !matches!(c.side.as_str(), "old" | "new")
             || c.line == Some(0)
@@ -718,22 +931,37 @@ pub fn render_markdown(doc: &Document) -> String {
                     .map(|end| format!("L{n}–L{end}"))
                     .unwrap_or(format!("L{n}"))
             })
-            .unwrap_or("File".into());
+            .unwrap_or(
+                if c.quote.is_some() {
+                    "HTML selection"
+                } else {
+                    "File"
+                }
+                .into(),
+            );
         result.push_str(&format!("\n## {} — {} ({})\n\n- Status: {}\n- Review: {}\n- Anchor: {} ({})\n- Revision: {}\n- Base: {}\n- ID: {}\n- Created: {}\n- Updated: {}\n\n", md_escape(&c.path), anchor, c.side, c.status, mode, anchor, c.side, c.context.revision.as_deref().unwrap_or("working tree"), c.context.base.as_deref().unwrap_or("empty tree"), md_escape(&c.id), md_escape(&c.created_at), md_escape(&c.updated_at)));
         if let Some(old_path) = &c.old_path {
             result.push_str(&format!("Previous path: {}\n\n", md_escape(old_path)));
         }
-        // Literal fenced text preserves arbitrary Markdown/HTML and even nested fences.
-        let fence = "`".repeat(
-            c.text
-                .split(|ch| ch != '`')
-                .map(str::len)
-                .max()
-                .unwrap_or(0)
-                .max(2)
-                + 1,
-        );
-        result.push_str(&format!("{fence}text\n{}\n{fence}\n", c.text));
+        if let Some(quote) = &c.quote {
+            result.push_str("Selected HTML text:\n\n");
+            result.push_str(&literal_text(quote));
+            result.push('\n');
+        }
+        result.push_str(&literal_text(&c.text));
     }
     result
+}
+
+// Literal fenced text preserves arbitrary Markdown/HTML and even nested fences.
+fn literal_text(text: &str) -> String {
+    let fence = "`".repeat(
+        text.split(|ch| ch != '`')
+            .map(str::len)
+            .max()
+            .unwrap_or(0)
+            .max(2)
+            + 1,
+    );
+    format!("{fence}text\n{text}\n{fence}\n")
 }

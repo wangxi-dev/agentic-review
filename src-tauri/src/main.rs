@@ -5,7 +5,8 @@ mod repository;
 mod tests;
 
 use repository::{
-    Commit, Context, Document, FileContent, Mode, Opened, Repository, Result, Snapshot,
+    Commit, Context, Document, FileContent, FileEntry, FileSearch, Mode, Opened, Repository,
+    Result, Snapshot,
 };
 use std::sync::Mutex;
 use tauri::State;
@@ -28,9 +29,17 @@ fn with_repo<T>(
 
 #[tauri::command]
 fn startup_path() -> Option<String> {
-    std::env::args_os()
-        .nth(1)
-        .map(|s| s.to_string_lossy().into_owned())
+    resolve_startup_path(std::env::args_os().nth(1))
+}
+
+fn resolve_startup_path(argument: Option<std::ffi::OsString>) -> Option<String> {
+    argument
+        .or_else(|| {
+            std::env::current_dir()
+                .ok()
+                .map(|path| path.into_os_string())
+        })
+        .map(|path| path.to_string_lossy().into_owned())
 }
 
 #[tauri::command]
@@ -57,6 +66,30 @@ async fn review_snapshot(
 }
 
 #[tauri::command]
+async fn list_folder(
+    state: State<'_, AppState>,
+    root: String,
+    directory: String,
+) -> Result<Vec<FileEntry>> {
+    let repo = with_repo(&state, &root, |repo| Ok(repo.clone()))?;
+    tauri::async_runtime::spawn_blocking(move || repo.folder_entries(&directory))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
+async fn search_files(
+    state: State<'_, AppState>,
+    root: String,
+    query: String,
+) -> Result<FileSearch> {
+    let repo = with_repo(&state, &root, |repo| Ok(repo.clone()))?;
+    tauri::async_runtime::spawn_blocking(move || repo.search_files(&query))
+        .await
+        .map_err(|e| e.to_string())?
+}
+
+#[tauri::command]
 async fn read_file(
     state: State<'_, AppState>,
     root: String,
@@ -74,6 +107,13 @@ async fn save_comments(state: State<'_, AppState>, document: Document) -> Result
     with_repo(&state, &document.root, |repo| repo.save(&document))
 }
 
+#[tauri::command]
+fn comments_markdown(state: State<'_, AppState>, document: Document) -> Result<String> {
+    with_repo(&state, &document.root, |_| {
+        Ok(repository::render_markdown(&document))
+    })
+}
+
 fn main() {
     tauri::Builder::default()
         .manage(AppState::default())
@@ -83,8 +123,11 @@ fn main() {
             open_repository,
             list_commits,
             review_snapshot,
+            list_folder,
+            search_files,
             read_file,
-            save_comments
+            save_comments,
+            comments_markdown
         ])
         .run(tauri::generate_context!())
         .expect("failed to run agentic-review");

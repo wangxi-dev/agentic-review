@@ -8,6 +8,7 @@ export interface ReviewComment {
   side: 'old' | 'new';
   line: number | null;
   endLine: number | null;
+  quote?: string | null;
   text: string;
   status: 'open' | 'resolved';
   createdAt: string;
@@ -20,7 +21,8 @@ export interface ReviewDocument {
   comments: ReviewComment[];
 }
 export interface Opened { root: string; document: ReviewDocument }
-export interface FileEntry { path: string; oldPath: string | null; status: string }
+export interface FileEntry { path: string; oldPath: string | null; status: string; directory?: boolean }
+export interface FileSearch { files: FileEntry[]; truncated: boolean }
 export interface Snapshot { context: Context; files: FileEntry[] }
 export interface Commit { hash: string; subject: string; author: string; date: string }
 export interface FileContent {
@@ -31,13 +33,14 @@ export interface FileContent {
   oldImage: string | null;
   newImage: string | null;
 }
-export interface Anchor { side: 'old' | 'new'; line: number | null; endLine: number | null }
-export type View = 'diff' | 'source' | 'preview';
+export interface Anchor { side: 'old' | 'new'; line: number | null; endLine: number | null; quote?: string | null }
+export type View = 'diff' | 'source' | 'preview' | 'pretty';
 
 export function sameContext(a: Context, b: Context): boolean {
   return a.mode === b.mode && a.revision === b.revision && a.base === b.base;
 }
 export function anchorLabel(anchor: Anchor): string {
+  if (anchor.quote) return `${anchor.side === 'old' ? 'Old' : 'New'} HTML selection: “${anchor.quote}”`;
   return anchor.line === null ? (anchor.side === 'old' ? 'Old version · file-level comment' : 'File-level comment') : `${anchor.side === 'old' ? 'Old' : 'New'} line ${anchor.line}${anchor.endLine && anchor.endLine !== anchor.line ? `–${anchor.endLine}` : ''}`;
 }
 export function contextLabel(context: Context): string {
