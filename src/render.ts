@@ -3,6 +3,7 @@ import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import { normalizeDiffText, reviewPatch } from './diff';
 import { prettyJson } from './files';
+import { disposePierre, pierreEligible, renderPierre, type DiffRenderer } from './pierre';
 import type { Anchor, FileContent, ReviewComment, View } from './types';
 
 export function element<K extends keyof HTMLElementTagNameMap>(tag: K, className = '', text = ''): HTMLElementTagNameMap[K] {
@@ -46,6 +47,7 @@ export function highlightedLines(source: string, path: string): string[] {
 interface RenderOptions {
   path: string;
   view: View;
+  renderer?: DiffRenderer;
   content: FileContent;
   comments: ReviewComment[];
   onAnchor: (anchor: Anchor, shift: boolean) => void;
@@ -251,6 +253,7 @@ function renderImages(host: HTMLElement, options: RenderOptions): void {
 }
 
 export function renderContent(host: HTMLElement, options: RenderOptions): void {
+  disposePierre(host);
   host.replaceChildren();
   const { content, view, path } = options;
   const fileComments = options.comments.filter(c => c.line === null);
@@ -300,6 +303,16 @@ export function renderContent(host: HTMLElement, options: RenderOptions): void {
     host.append(element('div', 'notice', 'LF/CRLF line-ending differences are ignored in this diff. Source files are unchanged.'));
   }
   if (!patch.hunks.length) { host.append(element('div', 'notice', 'No textual changes. This may be a rename, a line-ending-only change, an empty file, a file-mode change, or a change since the last refresh.')); return; }
+  if (options.renderer && options.renderer !== 'classic') {
+    if (pierreEligible(old, next)) {
+      renderPierre(host, { ...options, renderer: options.renderer, patch, fallback: error => {
+        renderContent(host, { ...options, renderer: 'classic' });
+        host.prepend(element('div', 'notice', `Pierre could not render this diff; showing Classic. ${String(error)}`));
+      } });
+      return;
+    }
+    host.append(element('div', 'notice', 'Large diff · showing Classic. The Pierre experiment is limited to 250,000 characters and 4,000 source lines across both versions.'));
+  }
   const oldLines = highlightedLines(normalizeDiffText(old), path), newLines = highlightedLines(normalizeDiffText(next), path);
   const rows: { old: number | null; new: number | null; html: string; type: string }[] = [];
   for (const hunk of patch.hunks) {

@@ -64,6 +64,14 @@ HTML scripts, navigation, forms, and external resources are blocked. Markdown is
 
 Text previews require UTF-8 and are limited to **5 MiB**. Unsupported binary files, symbolic links, submodules, and oversized files show an explanatory notice and still allow file-level comments. Files over 250,000 characters skip syntax highlighting; source/diff views stop at 20,000 rows, and diff computation has a one-second time limit to keep the UI responsive. JSON files support Source, Diff, and a display-only prettify toggle; diffs always use the original text.
 
+### Diff renderers
+
+Use **Renderer** above a text diff to choose **Classic** (the default), **Pierre · Unified**, or **Pierre · Split**. Pierre adds word-level highlights and expandable context. Switching renderers keeps your comment draft and anchor; your choice is remembered locally.
+
+Pierre Unified exposes new-side anchors for unchanged context. Use Split or Classic to comment on old-side context. Pierre falls back to Classic above 250,000 combined characters or 4,000 combined source lines. Source, document previews and image review are unchanged.
+
+Toolbar and file icons use a bundled subset of Pierre's SVGs, with text labels and separate Git status markers. See the [Pierre evaluation and browser demo](docs/pierre-evaluation.md) for measurements, trade-offs and commands to try the fixture repository.
+
 ### Image review
 
 Open a `.png`, `.jpg`, `.jpeg`, or `.webp` file directly from the file list in any review mode. Images are loaded locally from the working tree or the selected Git commit, not via a filesystem web server.
