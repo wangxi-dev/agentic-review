@@ -3,6 +3,8 @@
 .pi-loop.json*
 node_modules/
 dist/
+dist-demo/
+artifacts/
 src-tauri/target/
 src-tauri/gen/
 test-results/

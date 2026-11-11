@@ -1,6 +1,8 @@
 import { call, pickFolder, ask, handleClose } from './bridge';
 import { element, canPreview, isImage, renderContent } from './render';
 import { connectAppearanceControls } from './appearance';
+import { disposePierre, parseDiffRenderer, selectPierre, type DiffRenderer } from './pierre';
+import { connectIcons, fileIcon, icon } from './icons';
 import { fileMatcher, fileStatus } from './files';
 import { anchorLabel, contextLabel, sameContext } from './types';
 import type { Anchor, Commit, Context, FileContent, FileEntry, FileSearch, Mode, Opened, ReviewComment, ReviewDocument, Snapshot, View } from './types';
@@ -12,6 +14,8 @@ let snapshot: Snapshot | null = null;
 let selected: FileEntry | null = null;
 let content: FileContent | null = null;
 let view: View = 'source';
+let renderer: DiffRenderer = 'classic';
+try { renderer = parseDiffRenderer(localStorage.getItem('agentic-review.diff-renderer')); } catch { /* Session defaults. */ }
 let anchor: Anchor = { side: 'new', line: null, endLine: null };
 let editing: string | null = null;
 let busy = false;
@@ -94,6 +98,7 @@ function resetDraft(): void {
 }
 function updateAnchor(): void {
   $('anchor-label').textContent = anchorLabel(anchor);
+  selectPierre($('content'), anchor);
   document.querySelectorAll<HTMLElement>('#content [data-old], #content [data-new]').forEach(row => {
     const line = Number(row.dataset[anchor.side]);
     row.classList.toggle('selected-line', anchor.line !== null && line >= anchor.line && line <= (anchor.endLine ?? anchor.line));
@@ -104,7 +109,7 @@ function currentComments(): ReviewComment[] {
 }
 function drawContent(): void {
   if (!selected || !content || !activeContext) return;
-  renderContent($('content'), { path: selected.path, view, content, comments: currentComments(), onAnchor: (next, shift) => {
+  renderContent($('content'), { path: selected.path, view, renderer, content, comments: currentComments(), onAnchor: (next, shift) => {
     if (editing) return;
     if (shift && anchor.line !== null && next.line !== null && anchor.side === next.side) {
       anchor = { side: next.side, line: Math.min(anchor.line, next.line), endLine: Math.max(anchor.line, next.line) };
@@ -124,9 +129,28 @@ function drawTabs(): void {
   if (!isImage(selected.path) && canPreview(selected.path)) views.push('preview');
   for (const name of views) {
     const button = element('button', view === name ? 'active' : '', name[0].toUpperCase() + name.slice(1));
+    button.prepend(icon(name === 'diff' ? 'diff' : name === 'preview' ? 'preview' : 'source'));
     button.setAttribute('aria-pressed', String(view === name));
     button.addEventListener('click', () => { view = name; drawTabs(); drawContent(); });
     tabs.append(button);
+  }
+  if (view === 'diff' && !isImage(selected.path)) {
+    const label = element('label', 'renderer-control', 'Renderer');
+    const select = element('select');
+    select.setAttribute('aria-label', 'Diff renderer');
+    for (const [value, text] of [['classic', 'Classic'], ['pierre-unified', 'Pierre · Unified'], ['pierre-split', 'Pierre · Split']]) {
+      const option = element('option', '', text);
+      option.value = value;
+      select.append(option);
+    }
+    select.value = renderer;
+    select.addEventListener('change', () => {
+      renderer = parseDiffRenderer(select.value);
+      try { localStorage.setItem('agentic-review.diff-renderer', renderer); } catch { /* Session-only preference. */ }
+      drawContent();
+    });
+    label.append(select);
+    tabs.append(label);
   }
   if (/\.json$/i.test(selected.path)) {
     const button = element('button', view === 'pretty' ? 'active' : '', view === 'pretty' ? 'Original JSON' : 'Prettify JSON');
@@ -144,7 +168,7 @@ function fileButton(file: FileEntry): HTMLButtonElement {
   const marker = element('span', `file-status status-${file.status}`, status.symbol);
   marker.title = status.label;
   marker.setAttribute('aria-label', status.label);
-  button.append(marker, element('span', 'file-name', file.path.split('/').pop()!));
+  button.append(marker, fileIcon(file.path), element('span', 'file-name', file.path.split('/').pop()!));
   const count = documentData?.comments.filter(c => c.path === file.path).length ?? 0;
   if (count) button.append(element('span', 'comment-dot', String(count)));
   button.addEventListener('click', () => void run(async () => { if (await canNavigate()) await openFile(file); }));
@@ -155,6 +179,7 @@ function drawFolder(host: HTMLElement, files: FileEntry[]): void {
     if (!file.directory) { host.append(fileButton(file)); continue; }
     const group = element('details', 'file-group lazy-folder');
     const summary = element('summary', '', file.path.split('/').pop()!);
+    summary.prepend(icon('folder'));
     summary.dataset.directory = file.path;
     group.open = expandedFolders.has(file.path);
     const children = element('div', 'folder-children');
@@ -217,7 +242,9 @@ function drawFiles(): void {
     if (!group) {
       const details = element('details', 'file-group');
       details.open = true;
-      details.append(element('summary', '', directory === '.' ? 'Repository root' : directory));
+      const summary = element('summary', '', directory === '.' ? 'Repository root' : directory);
+      summary.prepend(icon('folder'));
+      details.append(summary);
       group = element('div');
       details.append(group);
       host.append(details);
@@ -240,6 +267,7 @@ async function openFile(file: FileEntry, context = snapshot?.context): Promise<v
   drawFiles(); drawTabs(); drawContent(); drawComments();
 }
 function clearFile(message: string): void {
+  disposePierre($('content'));
   selected = null; content = null; activeContext = null;
   $('file-path').textContent = 'Review workspace';
   $('file-meta').hidden = true;
@@ -365,6 +393,11 @@ function drawComments(): void {
 }
 
 connectAppearanceControls();
+connectIcons();
+if (import.meta.env.MODE === 'demo') {
+  const banner = element('div', 'demo-banner', 'DEMO · Fixture repository · Comments stay in memory; no files are read or written. Use Renderer to compare Classic and Pierre.');
+  document.querySelector('.repository-bar')!.after(banner);
+}
 $('open-folder').addEventListener('click', chooseFolder);
 $('welcome-open').addEventListener('click', chooseFolder);
 $('dismiss-error').addEventListener('click', () => { $('error').hidden = true; });

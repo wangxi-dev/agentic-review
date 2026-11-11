@@ -122,6 +122,25 @@ input::placeholder, textarea::placeholder { color: var(--muted); opacity: 1; }
 [hidden] { display: none !important; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
 
+/* Icons remain decorative: keep text labels and explicit Git status markers. */
+.icon { display: inline-flex; align-items: center; justify-content: center; width: 1.067rem; height: 1.067rem; flex: 0 0 auto; vertical-align: -.15em; }
+.icon svg { width: 100%; height: 100%; }
+button > .icon, summary > .icon { margin-right: .45rem; }
+.file > .icon { margin-right: 0; }
+.brand-icon .icon { width: 23px; height: 23px; }
+.welcome-icon .icon { width: 36px; height: 36px; }
+.icon-typescript { color: var(--accent); }
+.icon-javascript, .icon-json { color: var(--warning); }
+.icon-python, .icon-image { color: var(--success); }
+.icon-rust { color: var(--danger); }
+#view-tabs { flex-wrap: wrap; max-width: 100%; }
+.renderer-control { display: flex; align-items: center; gap: .5rem; padding-left: .6rem; color: var(--muted); font-size: .867rem; font-weight: 650; }
+.renderer-control select { max-width: 175px; padding: .35rem; }
+.pierre-view { --diffs-font-family: Consolas, "Cascadia Code", monospace; --diffs-font-size: 1.067rem; --diffs-line-height: 1.75rem; min-width: 0; }
+diffs-container.pierre-view { display: block; }
+.pierre-comment { margin: .4rem .6rem; white-space: pre-wrap; }
+.demo-banner { padding: 8px 22px; color: var(--selected-ink); background: var(--selected); border-bottom: 1px solid var(--border); font-size: .867rem; font-weight: 650; }
+
 /* App-level controls stay visible even with no repository open. */
 .topbar {
   min-height: 78px;

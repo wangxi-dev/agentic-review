@@ -5,6 +5,11 @@
   "type": "module",
   "scripts": {
     "dev": "vite --host 127.0.0.1",
+    "demo": "vite --mode demo --host 127.0.0.1 --port 1421",
+    "build:demo": "tsc --noEmit && vite build --mode demo",
+    "preview:demo": "vite preview --mode demo --host 127.0.0.1 --port 1421",
+    "demo:capture": "node scripts/capture-pierre-demo.mjs",
+    "demo:benchmark": "node scripts/benchmark-pierre.mjs",
     "build": "tsc --noEmit && vite build",
     "test": "vitest run src",
     "test:ci": "node --test scripts/use-public-npm.test.mjs",
@@ -16,6 +21,7 @@
     "test:rust": "cargo test --manifest-path src-tauri/Cargo.toml"
   },
   "dependencies": {
+    "@pierre/diffs": "1.6.4",
     "@tauri-apps/api": "^2.10.0",
     "@tauri-apps/plugin-dialog": "^2.6.0",
     "diff": "^8.0.2",
